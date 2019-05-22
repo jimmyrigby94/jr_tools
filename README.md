@@ -3,7 +3,9 @@
 <style>
  
   .format_text {
+  
   font-size: 16pt
+  
   }
   
 </style>
