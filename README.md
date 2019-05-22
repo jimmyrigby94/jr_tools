@@ -1,6 +1,8 @@
 # jr_tools: Tools for Learning Analytical and Programatic Implementations
+
 <style>
-  .format_test {
+ 
+  .format_text {
   font-size: 16pt
   }
   
