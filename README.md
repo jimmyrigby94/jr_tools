@@ -1,14 +1,6 @@
-# jr_tools: Tools for Learning Analytical and Programatic Implementations
+<link href="style.css" rel="stylesheet"></link>
 
-<style>
- 
-  .format_text {
-  
-  font-size: 16pt
-  
-  }
-  
-</style>
+# jr_tools: Tools for Learning Analytical and Programatic Implementations
 
 ## Motivation
 <div class = format_text>
@@ -21,7 +13,6 @@ The purpose of this repository is to develop and document a set of user defined 
 </div>
 
 ## TLDR
-
 <div class = format_text>
 In short, this repository is dedicated to providing a set of open source learning tools that highlight how analytical and data management functions *can* be implemented to solve specific analytic problems.
 </div>
