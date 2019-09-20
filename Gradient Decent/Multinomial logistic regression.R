@@ -8,12 +8,12 @@ test<-decisionr::sim_people(c("cost" = -.05, "morning" = 2), n_people = 1000, n_
                               QES = 1,
                               alt = 1:4,
                               cost = c(20, 13, 13, 20),
-                              morning = c(0, 1, 0, 1)), people = ., scale = 1, location = 0, shape = 0)
+                              morning = c(0, 1, 0, 1)), people = ., location = 0, scale = 1, shape = 0)
   
 
 
 # Multinomial Regression from Scratch -------------------------------------
-my_mnl<-function(formula=NULL, y=NULL, x=NULL, id = NULL, data =NULL, se = TRUE){
+my_mnl<-function(formula=NULL, id = NULL, data =NULL, tol = 1e-05){
   
 
 # Error Catching: Formula and Data arguments required ---------------------
@@ -45,8 +45,9 @@ my_mnl<-function(formula=NULL, y=NULL, x=NULL, id = NULL, data =NULL, se = TRUE)
       pull(p)
   } 
   
+  # initializes i
   i<-1
-  
+
   # Defines loss function
   cost<- function(theta){
     g<-model(theta)
@@ -59,51 +60,94 @@ my_mnl<-function(formula=NULL, y=NULL, x=NULL, id = NULL, data =NULL, se = TRUE)
   # Initializing Theta
   theta<- rep(0, times = ncol(x))
 
-
-# Closed form gradient not working
-# grad<-function(par){
-#   sapply(1:length(par),function(i) sum((y-y*model(par))*x[i]))
-# }
-
-# fin_grad<-grad(par = par)
+  # Solve for p
+  p<-model(theta)
+  
+  # Initialize ll and dif
+  ll_old<-cost(theta)
+  dif <-ll_old
   
 
-  # Applies BFGS optimization to cost functions applied above ---------------
   
-  my_res<-optim(par = theta, fn = cost,  method = "BFGS", hessian = TRUE)
+  # Initiaize first deriviative and second derivative
+  d1<-t(x)%*%(y-p)
   
-  par<-my_res$par
+  W<-matrix(0, nrow = nrow(x), ncol = nrow(x))
+  diag(W)<-p*(1-p)
+  d2<--t(x)%*%W%*%x
   
-  names(par)<-colnames(x)
+  # House cleaning
+  rm(W)
   
+  # Update Theta for first 
+  theta_up<- theta - solve(d2)%*%d1
+  
+  while(dif>tol){
+    # Update theta
+    theta<-as.vector(theta_up)
+    
+    # Solve for p
+    p<-model(theta)
+    
+    # Calculate new ll
+    ll_new<-cost(theta)
+    
+    # Calculate first d
+    d1<-t(x)%*%(y-p)
+    
+    # Calculate second d
+    W<-matrix(0, nrow = nrow(x), ncol = nrow(x))
+    diag(W)<-p*(1-p)
+    
+    d2<--t(x)%*%W%*%x
+    
+    # House Cleaning
+    rm(W)
+    
+    # Update Theta
+    theta_up<- theta - solve(d2)%*%d1
+    
+    # Update dif and overwrite old ll
+    dif<-ll_old-ll_new
+    ll_old<-ll_new
+  }
+  
+  # Calculating SE from Hessian
+  se<-sqrt(diag(round(solve(-d2),6)))
+  
+ # Saving Pars
+ pars<- data.frame(Parameters = theta_up, 
+             SE = se)%>%
+    mutate(z = Parameters/SE)
+  
+ # Assigning Row Names
+  rownames(pars)<-colnames(x)
+  
+  # Createing Predicted Output
   pred_dat<-data
+  pred_dat$phat<-p
   
-  pred_dat$v<- exp(as.vector(as.matrix(pred_dat[names(par)])%*%par))
-  
-  pred_dat<-pred_dat%>%
-    group_by(id)%>%
-    mutate(denom = sum(v), 
-           p = v/denom)
-  
-  list(parameters = par,
+  grad<-t(d1)%*%solve(d2)%*%d1
+  if(grad<1e-05){
+    message(paste0("Gradient close to zero suggesting convergence. Gradient = ", formatC(grad, format = "e", digits = 2)))
+  }else{
+    message(paste0("Gradient has deviated from 0. Check for convergence. Gradient = ", formatC(grad, format = "e", digits = 2)))
+  }
+  message()
+  # Outputting as List
+  list(parameters = pars,
        pred_dat = pred_dat,
-       opt = my_res)
-
-
+       first_der = d1,
+       second_der = d2,
+       likelihood = ll_new)
 }
-
-
-
-
-
 
 
 out<-my_mnl(decision ~ -1+ morning + cost, data = test, id = test$id)
 out
 
+
 mlogit_data<-mlogit.data(test, choice = "decision",  alt.var = "alt")
-
-
 m1<-mlogit(decision ~ morning+cost|0, data = mlogit_data)
 
 summary(m1)
