@@ -17,15 +17,49 @@ my_mnl<-function(formula=NULL, id = NULL, data =NULL, tol = 1e-05){
   
 
 # Error Catching: Formula and Data arguments required ---------------------
-
-  if(!is.null(formula) & !is.null(data)){
-    x<-model.matrix(formula, data)
-    y<-as.matrix(model.frame(formula, data)[,!all.vars(formula) %in% all.vars(formula[[3]])])
-    
-    # Throws an error if neither x and y are provided nor formula and data
-  }else{
+# Throws an error if neither x and y are provided nor formula and data
+  
+  if(is.null(formula) | is.null(data)){
     stop("Please provide either a formula and data or x and y.")
   }
+  
+
+# Handles formula and Preps Model Matrices --------------------------------
+  var_parse<-function(formula){
+    
+    # Parses forumla by splitting on pipe and +
+  xvar<-trimws(str_split(trimws(str_split(as.character(formula[3]), "\\|", simplify = TRUE)), "\\+", simplify = TRUE))
+    
+    # Identifies alt_gen coefficients (alternative specific variables generic coefs)
+    alt_gen<-xvar[1,]
+    if(str_count(as.character(formula[3]), "\\|")==0){
+      ind_alt<-c(NULL)
+      alt_alt<-c(NULL)
+      
+    # Identifies ind_alt coefficients (individual specific variables alternative specific coefficients)
+    } else if(str_count(as.character(formula[3]), "\\|")==1){
+      ind_alt<-xvar[2,]
+      alt_alt<-c(NULL)
+      
+    # Identifies alt_alt coefficients (alternative specific variables alternative specific coeficients)
+    }else if(str_count(as.character(formula[3]), "\\|")==2){
+      ind_alt<-xvar[2,]
+      alt_alt<-xvar[3,]
+    }
+    
+    list(alt_gen = alt_gen[nchar(alt_gen)>0],
+         ind_alt = ind_alt[nchar(ind_alt)>0],
+         alt_alt = alt_alt[nchar(alt_alt)>0])
+  }
+  
+  
+  terms<-var_parse(formula = formula)
+  
+  
+    x<-as.matrix(data[terms$alt_gen])
+    y<-as.matrix(model.frame(formula, data)[,!all.vars(formula) %in% all.vars(formula[[3]])])
+    
+
 
 
 # Error Catching: ID required to identify alternative sets --------------------------------
@@ -113,6 +147,8 @@ my_mnl<-function(formula=NULL, id = NULL, data =NULL, tol = 1e-05){
   }
   
   # Calculating SE from Hessian
+  # Note that the information matrix (i.e., inverse of standard errors) is a product of the variance observed in alternative k
+  # and the variance observed in option j
   se<-sqrt(diag(round(solve(-d2),6)))
   
  # Saving Pars
@@ -143,7 +179,7 @@ my_mnl<-function(formula=NULL, id = NULL, data =NULL, tol = 1e-05){
 }
 
 
-out<-my_mnl(decision ~ -1+ morning + cost, data = test, id = test$id)
+out<-my_mnl(decision ~  morning + cost, data = test, id = test$id)
 out
 
 
