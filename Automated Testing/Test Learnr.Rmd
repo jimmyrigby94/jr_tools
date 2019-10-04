@@ -1,0 +1,199 @@
+---
+title: "Tutorial"
+output: learnr::tutorial
+runtime: shiny_prerendered
+---
+## Motivation
+gradethis was throwing errors as of 10/04 when using many of their functions. This is a temporary solution until the bugs are addressed. 
+
+Basically, the function checker() can be used as in the tutorial_options function under the argument exercise.checker. The function checks items using an internally stored list defined under comment 5. Users would need to adapt this list if they want to test with different questions. Only results are graded and not the code itself. 
+I also added additional calls that saves quiz takers results in a RDS file (see comment 2). This can be removed or commented out if not wanted.  
+
+# Set Up
+Prior to running the tutorial, please replace the string below with a file path to where you want you quiz results to be stored!
+
+If you see "C:\\Users\\jimmy\\downloads" and your name is not Jimmy, you are probably not going to be able to run this tutorial. 
+
+Please make sure to upload the directory to blackboard at the end of the quiz. 
+```{r}
+target_dir<-"C:\\Users\\jimmy\\downloads"
+```
+
+
+```{r, echo = FALSE}
+checker <- function(
+  label=NULL,
+  user_code=NULL,
+  solution_code=NULL,
+  check_code=NULL,
+  envir_result=NULL,
+  evaluate_result=NULL,
+  envir_prep=NULL,
+  ...
+){
+  ##############################
+  ##### #1 Compile Results #####
+  ##############################
+  results<-list(label = label,
+                 user_code = user_code,
+                 solution_code = solution_code,
+                 check_code = check_code,
+                 envir_result = envir_result,
+                 evaluate_result = evaluate_result,
+                 envir_prep = envir_prep)
+  
+  ############################
+  ##### #2 Store Results #####
+  ############################
+  
+  saveRDS(results, file = paste0(target_dir, "//", label, ".rds"))
+  
+  ###################################################
+  ##### #3 Define Private Item Checker Function #####
+  ###################################################
+  # my_lab = item label
+  # object = object containing answer
+  # solution = what object should evaluate to
+  # t_message = Message if correct
+  # f_message = Meassge if incorrect
+  item_checker<-function(my_lab, object, solution, t_message, f_message){
+           
+
+     # Conditional message depending on whether the solution is correct or not      
+    if (label == my_lab) {
+      # Handles missing object in environment preventing crash and empty enironment
+      
+      if (length(ls()) < 1) {
+        out_list <-
+          list(
+            message = paste0("Your environment is empty. Please run code above."),
+            correct = FALSE,
+            location = "append"
+          )
+      } else if (all(!object %in% names(results$envir_result))) {
+        out_list <- list(
+          message = paste0("There is no object named ", object,
+                           " in your environment"),
+          correct = FALSE,
+          location = "append"
+        )
+        
+        # Handles correct and incorrect responses
+      } else{
+        # Parsing object so that it is scoping within the example environment
+        object_eval <- paste0("results$envir_result$", object)
+        object_eval <- eval(parse(text = object_eval))
+        
+        if (is.logical(all.equal(object_eval, solution))) {
+
+          out_list <-
+            list(message = t_message,
+                 correct = TRUE,
+                 location = "append")
+          
+        } else{
+          out_list <-
+            list(message = f_message,
+                 correct = FALSE,
+                 location = "append")
+        }
+      }
+      # Returns NULL if label does not match target label
+    } else{
+      out_list <- NULL
+    }
+    out_list
+  }
+  
+  ####################################################################
+  ##### #5 Create list storying arguments to be iterated over ########
+  ##### This is what changes between assessments######################
+  ####################################################################
+  
+  # my_lab = vector of labels for each question
+  # object = the object that stores the final solution for the question
+  # solution = the exact answer to the question. This is robust to type inconsistencies (i.e., as.integer(solution) == as.numeric(answer))
+  # t_message = message for the correct answer
+  # f_message = message for the incorrect answer
+  
+solutions<-  list(my_lab = c("two_plus_two", "sub", "hello_world"),
+       object = c("cat", "time", "greeting"),
+       solution = list(4, rep(1, times = 6), "hello_world"), 
+       t_message = rep("Great Job", 3),
+       f_message = sample(c("give_up", "you fool"), 3, TRUE))
+
+  ####################################################################
+  ##### #6 Iterate over tribble r with item_checker###################
+  ####################################################################
+  
+  my_results<-purrr::pmap(solutions, item_checker)
+  
+  ###############################################################################################
+  #### #7 Indexing Results so that only non-null (i.e., label matching) elements are returned####
+  ###############################################################################################
+  
+  out<-my_results[!sapply(my_results, is.null)][[1]]
+  
+    out
+
+}
+```
+
+```{r setup, include=FALSE}
+library(learnr)
+library(gradethis)
+library(testwhat)
+
+tutorial_options(exercise.timelimit = 60, exercise.checker = checker)
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+## Topic 1
+
+### Adding 
+
+Write the R code required to add two plus two and assign it to cat:
+
+```{r two_plus_two, exercise = TRUE}
+
+
+```
+
+```{r two_plus_two-check}
+#This is not necessary any longer
+"hello World"
+```
+
+### Subtracting Vectors
+
+Your r environment has two vectors titled start and finish. Write the R code required to to subtract start from finish and store the output in a new object titled time. 
+
+```{r prepare-sub}
+start<-1:6
+finish<-2:7
+```
+
+```{r sub, exercise = TRUE,  excercise.setup = "prepare-sub"}
+
+```
+
+```{r sub-check}
+#This is not necessary any longer
+"Hellow World"
+```
+
+### Pasteing Characters
+
+Write the necessary R-code to save the paste two strings "hello" and "world" together, separated by a underscore. Store this value under greeting.
+
+```{r hello_world, exercise = TRUE}
+
+
+```
+
+```{r hello_world-check}
+#This is not necessary any longer
+NULL
+```
+
