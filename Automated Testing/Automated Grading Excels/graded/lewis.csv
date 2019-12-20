@@ -1,0 +1,6 @@
+"lewis.csv.item","lewis.csv.response","lewis.csv.key","lewis.csv.correct"
+1,"d","a",FALSE
+2,"b","b",TRUE
+3,"c","c",TRUE
+4,"d","d",TRUE
+5,"f","e",FALSE
