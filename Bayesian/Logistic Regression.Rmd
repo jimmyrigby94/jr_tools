@@ -1,0 +1,856 @@
+---
+title: "Logistic Regression"
+author: "James Rigby"
+date: "10/26/2019"
+output: html_document
+---
+
+In this tutorial, I am going to describe the inner working of logistic regression. The first portion of the post is going to break the logistic model into small elements, writing a function for each of the chunks. This is meant to illustrate how logistic regression is actually estimated. The second part is going to approach logistic regression from a bayesian perspective and illustrate how Bayesian learning can be implemented to create an online machine learning tool. The final portion of this paper is going to demonstrate how to speed up bayesian analyses using approximations to the posterior. This post is going to be heavy on statistical theory, but I will try to point out the sections that those primarly conserned with application should be aware of in the section headers. 
+
+
+## Problem Setup
+Your consulting firm was recently hired to build a system that integrates with the company's Buisiness Intelligence (BI) software to understand the factors that influence employee recruitment. The primary critereon of interest is job acceptances - candidates decisions to accept or reject an offer made my the organization. You decide to begin this project by exploring a logit model (logistic regression), because you hear that it is easily scaleable and able to be developed into an active learning. 
+
+The BI platform provides you with information from recent job analyses, salary market surveys, job market research, and the benefits packages that were offered to the employee. I print the head of the data frame below. 
+
+
+# Simulating Data
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE, echo = FALSE}
+library(tidyverse)
+library(decisionr)
+library(knitr)
+#########################################
+######## Generating Jobs ################
+#########################################
+
+# Setting the random seed
+set.seed(1234)
+
+#Initializing Vector of Zeros
+Intercept<-flexibility<-difficulty<-job_alt<-salary<-market_sal<-vector(mode = "numeric", 100)
+
+# Populating every other vector with job characteristics
+# Each vector contains information on 50 jobs, but since individuals are choosing between accepting a job and not accepting a job, there is an additional 50 rows for individuals not accepting a job
+# Jobs vary on four dimensions job_alt, difficulty, flexibility and salary
+salary[seq(from = 2, to = 100, by = 2)]<-rnorm(50, 30, 5)
+job_alt[seq(from = 2, to = 100, by = 2)]<-sample(1:4, 50, replace = TRUE, prob = c(.5, .3, .1, .1))
+difficulty[seq(from = 2, to = 100, by = 2)]<-sample(1:4, 50, replace = TRUE, prob = c(.3, .5, .1, .1))
+flexibility[seq(from = 2, to = 100, by = 2)]<-sample(1:4, 50, replace = TRUE, prob = c(.7, .1, .07, .13 ))
+Intercept[seq(from = 2, to = 100, by = 2)]<-1
+market_sal[seq(from = 2, to = 100, by = 2)]<-salary[seq(from = 2, to = 100, by = 2)]+rnorm(n = 50, mean = 0, sd = 5)
+
+
+# Thus the job feature matrix has one row associated with the job and one row associated with not the job
+design_df<-data.frame(BLOCK = rep(1:50, each = 2), 
+                              QES = rep(1:50, each = 2),
+                              alt = rep(0:1, times = 50),
+                              Intercept = Intercept,
+                              cost = salary,
+                              job_alt = job_alt,
+                              difficulty = difficulty,
+                              flexibility = flexibility,
+                              market_sal = market_sal)%>%
+          mutate(sal_by_market_sal = cost*market_sal)
+```
+
+```{r, message=FALSE, warning=FALSE, echo = FALSE}
+#################################################
+######## Simulating person preferences ##########
+#################################################
+
+# Participants have their own preferences associated with each of these positons, for now we will simulate them as being fixed (i.e., an single preference parameter adequetly summarises all people)
+# We simulate these preference distributions below. 
+people<-sim_people(fixed_effects = c("Intercept" = 0, "cost" = .3, "job_alt" = 1, "flexibility" = .3, "difficulty"  = -2, "market_sal" = -.15, sal_by_market_sal = -.003), n_people = 250, n_blocks = 50, p_blocks = rep(.02, 50))
+
+
+#########################################
+######## Simulating decisions ###########
+#########################################
+# The following code chunch has the simulated people (i.e., job applicants) choose between accepting and rejecting the simulated job offers
+# I then organize the data frame a bit more so that the meaning of variables is clear
+
+dec<-sim_dec(design = design_df, people = people)%>%
+  ungroup()%>%
+  filter(alt == 1)%>%
+  select(job_id = BLOCK, applicant_id = id, salary = cost,  job_alt:market_sal, decision)
+
+head(dec)%>%
+  kable()%>%
+  kableExtra::kable_styling(bootstrap_options = "striped")
+```
+
+## Approaching Classification from a Linear Perspective
+Why is linear regression not the most appropriate technique for categorical outcomes? If we code job acceptance as 0 or 1 we can predict it using a linear regression model. Furthermore, if the goal of our analysis make predictions about those who accept a job and those who do not accept a job we could create a decision boundary. For example, we could classify job applicants with a predicted value above .5 as accepters and classify those with a score below .5 and rejecters. 
+
+```{r}
+p<-dec%>%
+  ggplot(aes(x = salary, y = decision))+
+  geom_smooth(method = "lm", se = FALSE, color = "red", fullrange = TRUE)+
+  geom_point()+
+  geom_vline(xintercept = 25.80, lty = 3)+
+  labs(title = "Linear Approach to Classification", 
+       x = "Salary", 
+       y = "Predicted Values (1 = Accepted Job Offer)")+
+  scale_y_continuous(breaks = seq(0, 1, by = .1))
+
+plotly::ggplotly(p)
+
+```
+What does .5 mean though? Some people may be tempted to say that .5 is the probability that an applicant accepts a job offer. That interpretation is incorrect. Imagine that we tried to generalize this model to make predictions for a new set of jobs. The salary for these positions are a little bit higher. When we make predictions for the new point (depicted as a cross). The predicted value is 1.08. Given that probabilities are bounded by 0 and 1, this is cleary not a probability. In fact, the predicted values are relatively meaningless.
+
+```{r}
+p<-p+
+   geom_point(data = data.frame(salary = 55, decision = 1), aes(x = salary, y = decision), shape = 3)+
+  scale_y_continuous(breaks = seq(0, 1.2, by = .1))
+
+plotly::ggplotly(p)
+```
+
+
+
+## Logisic Regression: A Probablistic Approach to Classification
+
+We can still approach classification from a linear perspective, however, we need to transform the function to accomidate the binary data. Logistic regression does this by assuming the log odds of the categorial outcome is linearly related to the independent variables. 
+
+
+$$log\frac {p(y=1)}{p(y=0)} = X\beta+e$$
+
+We can rearrange this function to depict the model in probablistic terms. 
+
+$$\frac {p(y=1)}{p(y=0)}= e^{X\beta+e}$$
+$$\frac {p(y=1)}{1-p(y=1)}= e^{X\beta+e}$$
+$$p(y=1)= (e^{X\beta+e}-e^{X\beta+e}p(y=1)) $$
+$$p(y=1)+e^{X\beta+e}p(y=1)= (e^{X\beta+e}) $$
+$$p(y=1)(1+e^{X\beta+e})= (e^{X\beta+e}) $$
+$$p(y=1) = \frac{(e^{X\beta+e})}{(1+e^{X\beta+e})} $$
+This can be written in a slightly more compact form
+
+$$p(y=1) = \frac{1}{(1+e^{-(X\beta+e)})}$$
+Notice that there is still a linear component $X\beta + e$, however it is transformed to ensure that the function is bounded by 0 and 1. 
+
+
+How does this new function look? Unlike the linear classifier (red line) the logistic model's (blue line) predicted values can be directly interpreted as the probability of an employee accepting a job given the predictors. 
+
+```{r}
+
+p<-p+
+  geom_smooth(method = "glm", 
+              method.args = list(family = "binomial"), 
+              fullrange = TRUE, 
+              se = FALSE, 
+              color = "blue")+
+  scale_y_continuous(breaks = seq(0, 
+                                  1.2, 
+                                  by = .1))+
+  labs(title = "Comparing Linear and Logistic Approaches to Classification")
+
+plotly::ggplotly(p)
+
+```
+
+Zooming out provides a better illustration of how the two functions differ. The logit model assymptotes at 0 and 1 while the linear model is, well, linear. Interstingly, the decision boundaries for the two models seem aligns at a .5 threshold. However, if we adjusted the decion boundary above or below .5, the two models would diverge. 
+
+```{r}
+p<-p+
+  lims(x = c(-20, 70))+
+  geom_hline(yintercept = 1, lty = 3)+
+  geom_hline(yintercept = 0, lty = 3)
+
+p$layers[[3]]<-NULL
+
+plotly::ggplotly(p)
+```
+
+
+Lets define the functional form of the logistic regression. To make it's relation to the linear model explicit, I defined a function called `v` which is the estimate of the exponentiated portion of the model (i.e., $X\beta$). I then define a function called `p_hat` which transforms the linear output to estimate probabilities. 
+
+
+```{r}
+# Linear combination of predictors
+v<-function(X, beta){
+  v<-X%*%beta
+  v
+}
+
+# Estimated Probability through sigmoid transformation
+p_hat<-function(v){
+
+  p<-1/(1+exp(-v))
+  
+  p
+}
+```
+
+## Maximum Likelihood Estimation
+
+Just like linear regression selects the regression coefficients that minimize the sum of squared error, logistic regression has an objective criterea, or objective function. Logistic regression is fit using maximum likelihood estimation. Broadly speaking, maximum likelihood tries to find the parameters ($\beta$) that maximize the probability of observing the data that was observed (i.e, $p(y|\beta, X)$). In practice, the negative log likelihood is typically minimized, but maximium likelihood sounds better than negative minimum log likelihood. The negative log likelihood function for logistic regression is written below.
+
+$$L(\beta) = -\sum_{i=1}^n\ y_i\ ln(\ \hat p_i(y = 1)\ )+(1-y_i)\ ln(\ 1-\hat p_i(y = 1)\ )$$
+
+What does the likelihood function mean? Let's break the function into two pieces by spliting it at the plus sign. 
+
+**Part 1**
+
+$$y_i\ ln(\ \hat p_i(y = 1)\ )$$
+This portion of the likelihood function multiplies the oberved outcome ($y_i$) by the log of the expected probability. As probabilities fall between 0 and 1 and the log of numbers closer to 0 become more negative, this portion of the likelihood is largest when 1) the predicted probability is high and 2) the observed outcome was one. In other words, this portion of the equation is the largest when observations are correctly classified as belonging to class 1. Observations that are 0 do not contribute to this part of the likelihood. The plot below illustrates how this function behaves across classes as the predicted probability increases. 
+
+```{r}
+expand.grid(p_hat = seq(.001, 1, .001), y_i = c(0,1))%>%
+  mutate(likelihood = y_i*log(p_hat),
+         y_i = as.factor(y_i))%>%
+  ggplot(aes(x = p_hat, y = likelihood, color = y_i))+
+   geom_line()+
+  labs(x = "Predicted Probability", 
+       y = "Part 1 Likelihood",
+       title = "Illustration of Part 1 of Likelihood Function")+
+  guides(color = guide_legend("Observed Y"))+
+  scale_color_manual(values = c("red", "blue"))
+```
+
+**Part 2**
+
+$$(1-y_i)\ ln(\ 1-\hat p_i(y = 1)\ )$$
+
+The second half of the likelihood formula follows the same logic. The major differences is that it focuses on encorporating the other class. This portion of the likelihood is maximized when 1) the predicted probability is closest to 0 and 2) the observed class was 0. Thus, this portion is maximized when the model accurately predicts class 0. The plot below depicts this function. 
+
+```{r}
+expand.grid(p_hat = seq(0, .999, .001), y_i = c(0,1))%>%
+  mutate(likelihood = (1-y_i)*(log(1-p_hat)),
+         y_i = as.factor(y_i))%>%
+  ggplot(aes(x = p_hat, y = likelihood, color = y_i))+
+   geom_line()+
+  labs(x = "Predicted Probability", 
+       y = "Part 1 Likelihood",
+       title = "Illustration of Part 1 of Likelihood Function")+
+  guides(color = guide_legend("Observed Y"))+
+  scale_color_manual(values = c("red", "blue"))
+```
+
+
+Taken together, the likelihood function is the most positive for the $\beta$ that do a the best job discriminating between the classes. The function below writes the likelihood function. Its sole arguments are the observed values `y` and the predicted probabilities `p` which can be generated by `p_hat()`. 
+
+
+```{r}
+# Implementation of the likelihood
+ll<-function(y, p){
+  -sum(y*log(p)+(1-y)*log(1-p))
+}
+```
+
+## Newtonian Optimization to Solve for Beta
+How do we solve for the $\beta$ that maximize the likelihood of our observed data? One method is to use Newtonian optimization to solve for the maximum of our likelihood function. Newtonian methods rely on a second order Taylor expansion that approximates the likelihood function. So long as the function is second differentiable we can iteratively update our estimates for $\beta$ using the following equation:
+
+$$\beta_{new}= \beta_{old}-H_\beta^{-1}\Delta\beta$$
+
+where $\Delta\beta$ is the vector of first derivatives of the likelihood function with respect to $\beta$ and $H_\beta$ is equal to the the hessian, or matrix of second derivatives, of the likelihood function with respect to the regression coefficients. 
+
+This function sets the derivatives of the quadratic approximation to 0, therby solving for the approximation's minimum or maximum.
+
+To visually illustrate what newtonian optimization does, Let's try to optimize the following equation. 
+
+$y = .25x^2$$
+
+```{r}
+data.frame(x = -20:20)%>%
+  mutate(y = .25*x^2)%>%
+  ggplot(aes(x = x, y = y))+
+  geom_line()
+```
+
+To begin optimizing, we need to initalize the function by picking starting values. Lets pick a point thats really far off from the stationary point (the minimum).
+
+```{r}
+obj_function<-function(x){
+  .25*x^2
+}
+
+data.frame(x = -30:30)%>%
+  mutate(y = obj_function(x))%>%
+  ggplot(aes(x = x, y = y))+
+  geom_line()+
+  geom_point(aes(x = -20, y = obj_function(-20)))
+```
+
+The derivative of the objective function in this example is equal to $.5x$ while the second derivative is equal to $.5$. To verify my calculations are correct, I plot the objective below. As a reminder the first derivative is equal to the tangent line, or the instintaneous slope at a point $x_n$. 
+
+```{r}
+obj_function<-function(x){
+  .25*x^2
+}
+
+data.frame(x = -30:30)%>%
+  mutate(y = obj_function(x))%>%
+  ggplot(aes(x = x, y = y))+
+  geom_line()+  
+  geom_segment(x = -20-3, xend = -20+3, y = obj_function(-20)+10*3, yend = obj_function(-20)-10*3, color = "red", size = 1.07)+
+  geom_point(aes(x = -20, y = obj_function(-20)))
+
+```
+
+Let's take a look at the taylor expansion of this equation about our starting point.  
+
+$$f_T(x)= f(x_n)+f'(x_n) \Delta x+ \frac{1}{2} f''(x_n) \Delta x^2$$
+
+We can plug in our starting values and the derivatives to define and plot the quadratic approximation. 
+
+$$f_T(-20) = 100 + (-10 \times (x+20)) + \frac{1}{2} (.5 \times (x+20)^2)$$
+
+Plotting this function over the objective function reveals that it is a fantastic approximation to the objective function, which may not be supprising given that true form of the objective is quadratic. 
+
+```{r}
+taylor_exp_neg_20<-function(x){
+ obj_function(-20)+ (x+20)* -10+ 1/2* .5* (x+20)^2
+}
+
+data.frame(x = -30:30)%>%
+  mutate(y = obj_function(x),
+         taylor = taylor_exp_neg_20(x))%>%
+  ggplot(aes(x = x, y = y))+
+  geom_line()+
+  geom_line(aes(x = x, y = taylor), color = "red", lty = 2, size = 1.07)+
+  geom_point(aes(x = -20, y = obj_function(-20)))
+```
+
+We can apply the update rule by applying the following formula
+
+$$x_{new} = x_{old}-\frac{\Delta x}{\Delta \Delta x}$$
+$$x_{new} = -20-\frac{-10}{.5}$$
+
+Given the perfect congruence between the taylor expansion and the objective function, this optimization problem converges in one iteration. This only occurs when the function you are trying to maximize or minimize is perfectly represented by the taylor expansion. Unfortunately, the likelihood function requires multiple taylor expansions to converge but this isn't a huge deal. We just need to know a little bit of programming to get the job done!
+
+```{r}
+data.frame(x = -30:30)%>%
+  mutate(y = obj_function(x),
+         taylor = taylor_exp_neg_20(x))%>%
+  ggplot(aes(x = x, y = y))+
+  geom_line()+
+  geom_line(aes(x = x, y = taylor), color = "red", lty = 2, size = 1.07)+
+  geom_point(aes(x = -20, y = obj_function(-20)))+
+  geom_segment(aes(x = -20, xend = -20, y = obj_function(-20), yend = obj_function(-20+10/.5)), lty = 2, color = "red")+
+  geom_segment(aes(x = -20, xend = -20+10/.5, y = 0, yend = 0), color = "red", lty = 2)+
+  geom_point(aes(x = 0, y = 0), shape = 2)
+```
+
+
+Because the likelihood in logistic regression is second differentable, we can apply newtonian methods! The first derivative of likelihood function can be estimated using the following formula
+
+$$\Delta\beta = -X^\top (y-p(y=1))$$
+I implement this function below. 
+
+
+```{r}
+deriv<-function(X, y, p){
+  t(X)%*%(y-p)
+}
+```
+
+
+
+The second derivative has quite a special place in psychological assessment. This is because of its close relationship with the information matrix, a matrix that comes up quite frequently in IRT models (The information matrix is simply the negative of the hessian). It's scalar representation may seem a little bit tricky, but the matrix calculations (how I implement my R code below) is actually quite easy! I'll show both derivations below. The scalar representation can be calculated as follows:
+
+$$\frac{\delta^2L(\beta)}{\delta\beta_j\delta\beta_l} = \sum_{i = 1}^n\ x_{ij}\ x_{il}\ p_i(y = 1)\ (1-p_i(y = 1))$$
+
+This solves for element $j, l$ of the hessian matrix. 
+
+The entire hessian can be solved using the following matrix algebra. 
+
+$$H_{\beta} = X^\top S X$$
+where S is a diagnol matrix with $p(y=1)(1-p(y=1))$ along the diagonal. 
+
+```{r}
+# Diaganol Matrix S
+S_mat<-function(p){
+  var<-p*(1-p)
+  dim<-length(var)
+  s<-matrix(0, nrow = dim, ncol = dim)
+
+  diag(s)<-var
+  
+  s
+}
+
+
+# Calculate Information Matrix
+second_deriv<-function(X, S){
+  t(X)%*%S%*%X
+}
+```
+
+## Iteratively Reweighted Least Squares
+If you read many methodological papers on logistic regression it is only a matter of time before you come across the term "Iteratively Reweighted Least Squares". An interesting property of the Newton step described above is that it simplifies to another optimization method called iteratively reweighted least squares. We could really get into the weeds with this method, but there is a fantastic post on stacks exchange that explains its derivation and relation to newtonian methods. You can find the link here [here](https://stats.stackexchange.com/questions/344309/why-using-newtons-method-for-logistic-regression-optimization-is-called-iterati). The author, jld (Joseph) has a fantastic, by the way [blog](https://jld-stats.com/author/josephldeutsch/).
+
+Assuming that those interested followed up by reading the blog post, I will just show the update rule below 
+
+Formulaically, the iterative least squares step is equal:
+
+$$\beta_{new} = H_\beta^{-1}X^\top S z$$
+where z is defined as $X \beta+S^{-1}(y-p(y=1))$.
+
+Those who read the blog post may be confused by the notation, but this derivation is identical to that written by jld and my representation based on Hastie, Tibshirani, and Friedman's (2001) derivation in Elements of Statistical Learning. Both are accurate but use different notational conventions! The code below defines the nessissary functions.
+
+```{r}
+# Define z
+z<-function(X, theta, S, y, p){
+  X%*%theta+solve(S)%*%(y-p)
+}
+```
+
+```{r}
+# Update the regression weights
+update_beta<-function(i_mat, X, S, z){
+  
+ (solve(-i_mat))%*%t(X)%*%S%*%z
+
+  }
+```
+
+
+## When do we stop?
+Iterative methods require some stopping criterea. The default for some software proprietary statistical packages is the relative gradient convergence critereon. To ensure that the model doesn't get stuck in a perpetual loop, I also include a maximum iterations option as a safe gaurd, but typically models converge quickly. 
+
+
+```{r}
+relative_grad_crit<-function(deriv, i_mat, ll){
+  abs((t(deriv)%*%solve(i_mat)%*%deriv)/(abs(ll)+1e-6))
+}
+```
+
+## Hypothesis Testing
+
+If you are interested in making inferences about the relationship between the predictors and outcome, deriving the information matrix the final piece to the puzzle. The information matrix is important because, based on asymptotic normal theory $\hat \beta \sim MVN(\beta, \hat\Sigma_\beta)$ where $\Sigma_\beta$ is equal to the inverse of information matrix. This means that the standard erros of beta, which are used in Wald's tests for significance, are equal to the square root of the diagonal of $\Sigma_{\beta}$.  
+
+```{r}
+information_mat<-function(sec_deriv){
+  -sec_deriv
+}
+```
+
+## Putting it all together
+Below I create a function that pulls together all of the pieces
+```{r}
+log_reg<-function(X, y, max_iter = 20, tol = 1e-8){
+  
+  # Initalize the number of iterations so max_iter will serve as a stopping critereon
+  i<-1
+
+  # Provide starting values for the regression weights (set them to 0)
+  theta<-rep(0, times = ncol(X))
+
+  # Solve all components of the model for starting values
+  # These just implement our functions that were defined above
+  
+  # Solves for the predicted probability given starting values
+  v_i<-v(X = X, beta = theta)
+  p<-p_hat(v = v_i)
+  
+  # Solves for the first and second derivaties of likelihood function given start values
+  deriv_i<-deriv(X, y, p)
+  S<-S_mat(p = p)
+  s_deriv<-second_deriv(X = X, S = S)
+  i_mat<-information_mat(sec_deriv = s_deriv)
+  
+  # Initializes the stopping critereon
+  grad_crit<-relative_grad_crit(deriv_i, i_mat, ll(y, p))
+  
+  # Implementing Iteratively Reweighted Least Squares
+  # Runs until stopping critereon is reached
+  while(i<max_iter&grad_crit>tol){
+    
+  # Update beta using IRLS step
+  z_i<-z(X = X, theta = theta, S = S, y = y, p = p)
+  theta<-update_beta(i_mat = i_mat, X = X, S = S, z = z_i)
+  
+  # Solve for VI and P with new values
+  v_i<-v(X = X, beta = theta)
+  p<-p_hat(v = v_i)
+  
+  # Solves for the first and second derivaties
+  deriv_i<-deriv(X, y, p)
+  S<-S_mat(p = p)
+  s_deriv<-second_deriv(X = X, S = S)
+  i_mat<-information_mat(sec_deriv = s_deriv)
+  
+  # update ll
+  ll_new<-ll(y = y, p = p)
+  
+  # Return a message with the iteration value
+  message("Iteration: ", i, ll_new)
+  
+  # move one iteration forward
+  i<-i+1
+  
+  # Calculate stoping critereon
+  grad_crit<-relative_grad_crit(deriv_i, i_mat, ll(y, p))
+}
+
+# Calculate final log likelihood and betas
+final_ll<-ll(y = y, p = p)
+final_beta<- theta
+
+# Format the betas
+names(final_beta)<-c(colnames(X))
+
+# Return the Values
+list(betas = final_beta, 
+     LL = -final_ll, # Returns negative final ll because ll is producing negative ll
+     vcov = -solve(i_mat))
+}
+```
+
+
+# Giving the Model A Try
+```{r}
+# Prep Matrices
+X<-dec[3:7]
+y<-dec["decision"]
+
+X<-cbind(1, X)
+X<-as.matrix(X)
+y<-as.matrix(y)
+
+colnames(X)[1]<-"(Intercept)"
+
+our_reg<-log_reg(X = X, y = y, max_iter = 100)
+```
+
+# How Does Our Model Compare with glm?
+Lets fit a model using the standard glm function and compare it to our results. Below, I output the coefficients and standard errors from both model. Not bad, right?
+
+
+```{r}
+their_reg<-glm(decision~., data = dec%>%select(salary:decision), family = "binomial")
+
+data.frame(our_coefs = as.vector(our_reg$betas),
+           our_se = sqrt(diag(our_reg$vcov)),
+           their_coefs = coef(their_reg),
+           their_se = sqrt(diag(vcov(their_reg))))%>%
+  kable(format = "html")%>%
+  kableExtra::kable_styling(bootstrap_options = "striped")
+
+
+logLik(their_reg)
+our_reg$LL
+```
+
+## Next Time
+Come back for part two of this post where we learn how to implement a couple of different online learning techniques including online learning and stochastic gradient descent. 
+
+
+
+
+
+## A Quick Review
+In my last post, I illustrated how to write a function for fitting logistic regression, a common model for classifying dichotimous categorical outcomes. The model predicted the probability that y equaled class 1 p(y = 1) by applying a sigmoid transformation to the linear combination of predictors($\frac{1}{(1+e^{-(X\beta+e)})}$). Regression weights are chosen such that the likelihood of the observed data, given beta ($p(y|\beta)$), is maximized. 
+
+## What can be improved on?
+Our maximum likelihood implementation (frequentist approach) is nice, but it has some significant shortcommings as is. First, traditional maximum likelihood logistic regression does not take into account prior information. Ignoring prior information makes it difficult to refit the model as new batches of data come in. Consider the motivating example from the previous post. Our goal was to build a classification system to predict the probability of an employee accepting a job offer. As hiring cycles begin and end, users may want to update their model with each new batch of data that comes in! Our function as is, cannot accommidate updates and must be refit using all available data. This can lead to extensive (and unnessary) database management costs that store all historic data. While this may not be a big deal for small organizations, when working with large organizations this could become a sizeable cost!
+
+Hypothesis tests allow researchers to talk about the probability of beta given the null, but do not allow for the discussion of beta given the data. 
+
+Not only does traditional maximum likelihood estimate fail to account for prior information, it approaches uncertainty in the parameter estimates in a rather unrefined way. Maximum likelihood is rooted in frequentist notions of probability. In short frequentists approach estimation and prediction by assuming that the model captures reality and that the parameter estimate is our best guess at the population parameter. While we could generate confidence intervals, these intervals rely on the notion that if we were to take infinite samples of the population and calculate the 95% confidence interval for each sample, the true predicted values would fall in the confidence intervals 95% of the time. This is primarily an issue when communicating predictions and results to stakeholders, as people often take point estimates for predictions or parameter estiamtes as the state of reality!
+
+
+## What does a bayesian perspective contribute?
+
+The bayesian perspective addresses both of these short commings by defining and estimating a full probability model.
+
+$$p(A|B) = \frac{p(B|A)p(A)}{p(B)}$$
+
+Let's put things in terms of our logistic regression model. We have a set of parameters, $\beta$, our data, $D$, and a set of prior beliefs about beta $\beta_{prior}$. We are interested in describing the density of $p(\beta|D)$, which is ofter refferred to as the **posterior distribution**. However, the maximum likelihood approach we solved for above focuses exclusively on $p(D|\beta)$. We can implement bayes rule in this scenario by modeling 
+
+$$p(\beta|D) = \frac{p(D|\beta)p(\beta|\beta_{prior})}{p(D)}$$
+
+Lucky for us there are some familiar terms! We know that the likelihood formula above is equivalent to the $p(D|\beta)$. The term $p(\beta|\beta_{prior})$ is simply a probability density or the prior evaluated at $\beta$. For example, if we use a normal prior on the regression coefficients, $p(\beta|\beta_{prior})$ could be solved for using `dmvnorm(beta, mu_beta_prior, Sigma_beta_prior)`. Plugging in the likelihood for $P(D|\beta)$ and using our new understanding of $P(\beta|\beta_{prior})$ we are left with $p(D)$. 
+
+$$p(\beta|D) = \frac{L(\beta)p(\beta|\beta_{prior})}{p(D)}$$
+
+$p(D)$ is a scaling constant that ensures the product of the probability probability density integrates to 1. Unforuntately in our case there is no analytic solution for P(D). This is because when we apply the sigmoid transformation to the linear model, we remove the possibility of finding conjugate priors (see [here](https://en.wikipedia.org/wiki/Conjugate_prior)). Instead of using formulaic methods we must rely on true bayesian methods that simulate the posterior distribution (Hamiltonian Markov Chain Monte Carlos) or approximate the posterior. 
+
+##
+
+
+
+
+
+
+```{r}
+library(brms)
+m1priors <- c(
+  prior(normal(0,3), class = "Intercept"),
+  prior(normal(0,3), class = "b", coef = "flexibility"),
+  prior(normal(0,3), class = "b", coef = "job_alt"),
+  prior(normal(0,3), class = "b", coef = "salary"),
+  prior(normal(0,3), class = "b", coef = "difficulty"),
+  prior(normal(0,3), class = "b", coef = "market_sal")
+)
+
+
+m1 <- brms::brm(
+  decision ~ salary+job_alt+difficulty+flexibility+market_sal,
+  data = dec,
+  prior = m1priors,
+  family = "bernoulli",
+  seed = 123 # Adding a seed makes results reproducible.
+)
+
+
+summary(m1)
+
+vcov(m1)
+```
+
+
+```{r}
+library(tidybayes)
+
+get_variables(m1)
+
+post<-m1%>%spread_draws(b_Intercept, b_salary, b_job_alt, b_difficulty, b_flexibility, b_market_sal)
+
+post<-post%>%
+  select(b_Intercept:b_market_sal)%>%
+  gather(key = var, value = value)%>%
+  group_by(var)%>%
+  summarise(mean = mean(value),
+            sd = sd(value))
+```
+
+
+
+```{r}
+fe<-c("Intercept" = 0, "cost" = .3, "job_alt" = 1, "flexibility" = .3, "difficulty"  = -2, "market_sal" = -.15, sal_by_market_sal = -.003)
+
+iter<-10
+
+
+# Initialize List
+model_list<-list()
+
+model_list[[1]]<-post
+
+for (j in 2:iter){
+  
+# Simulate People --------------------------------------------------------------------------------
+# Simulate People
+people<-suppressMessages(sim_people(fixed_effects = fe, n_people = 200, n_blocks = 50, p_blocks = rep(.02, 50)))
+
+
+#########################################
+######## Simulating decisions ###########
+#########################################
+# The following code chunch has the simulated people (i.e., job applicants) choose between accepting and rejecting the simulated job offers
+# I then organize the data frame a bit more so that the meaning of variables is clear
+
+dec<-suppressMessages(sim_dec(design = design_df, people = people))
+
+dec<-dec%>%
+  ungroup()%>%
+  filter(alt == 1)%>%
+  select(job_id = BLOCK, applicant_id = id, salary = cost,  job_alt:market_sal, decision)
+
+
+
+
+# Set Priors -----------------------------------------------------------------------------------
+m2prior_df <- post%>%
+  transmute(prior = paste0("normal(", mean, ",", sd, ")"),
+         class = if_else(str_detect(var, "Intercept"), "Intercept", "b"),
+         coef = if_else(str_detect(var, "Intercept"), "", str_remove(var, "b_")))
+
+beta_df<-m2prior_df%>%
+  filter(class != "Intercept")
+
+intercept_df<-m2prior_df%>%
+  filter(class == "Intercept")
+
+m2_priors<-empty_prior()
+
+for(i in 1:nrow(beta_df)){
+  m2_priors[i,]<- prior_string(beta_df$prior[i], class = beta_df$class[i], coef = beta_df$coef[i])
+}
+
+m2_priors[nrow(m2prior_df),]<- prior_string(intercept_df$prior[1], class = intercept_df$class[1])
+
+
+m2 <- brms::brm(
+  decision ~ salary+job_alt+difficulty+flexibility+market_sal,
+  data = dec,
+  prior = m2_priors,
+  family = "bernoulli",
+  seed = 123 # Adding a seed makes results reproducible.
+)
+
+
+
+
+post<-m2%>%spread_draws(b_Intercept, b_salary, b_job_alt, b_difficulty, b_flexibility, b_market_sal)
+
+post<-post%>%
+  select(b_Intercept:b_market_sal)%>%
+  gather(key = var, value = value)%>%
+  group_by(var)%>%
+  summarise(mean = mean(value),
+            sd = sd(value))%>%
+  mutate(iteration = j)
+
+model_list[[j]]<-post
+}
+```
+
+```{r}
+model_df<-model_list%>%bind_rows()%>%
+  mutate(iteration = if_else(is.na(iteration), 1, as.double(iteration)))
+
+ggplot(model_df, aes(x = iteration, y = mean, color = var))+
+  geom_line()
+
+ggplot(model_df, aes(x = iteration, y = sd, color = var))+
+  geom_line()
+
+
+```
+
+
+### LaPlace Approximation
+```{r}
+
+# Initializing Parameters ------------------------------------------------------------------
+
+
+# Define Priors and starting values
+w_0<-m_0<-rep(0, ncol(X))
+
+# Define precision
+S_0<-diag(rep(5, times = ncol(X)))
+
+
+# Defining Objective Function ----------------------------------------------------------------
+post_ll<-function(theta){
+ 
+  v_hat<-v(X = X, beta = theta) 
+  p<-p_hat(v_hat)
+  
+ll_x<-sum(y*p+(1-y)*(1-p))
+ll_p<--1/2*t(theta-m_0)%*%solve(S_0)%*%(theta-m_0)
+ 
+ll_post<- ll_x+ll_p
+
+-ll_post
+}
+
+# Solving for theta --------------------------------------------------------------------------
+optim<-optim(w_0, post_ll)
+ 
+ rs<-optim(par = w_0, post_ll)
+
+ theta<-rs$par
+
+# Solving for Hessian -------------------------------------------------------------------------
+posterior_hessian<- function(theta, X, y, sigma_0){
+
+  v_hat<-v(X, theta)
+  p<-p_hat(v = v_hat)
+
+  p_var<-p*(1-p)
+  
+  mat_var<-list()
+
+  for(i in 1:length(p_var)){
+   mat_var[[i]]<- p_var[[i]]*X[i,]%*%t(X[i,])
+  }
+
+  ll_deriv<-Reduce("+", mat_var)
+
+  d2<-solve(sigma_0)
+
+  post_hesh <- ll_deriv+d2
+
+  solve(post_hesh)
+}
+  
+p_h<-posterior_hessian(theta = theta, X = X, y = y, sigma_0 = S_0)
+
+S_0<-p_h
+
+m_0<-theta
+ 
+```
+
+```{r}
+# Simulation Settings
+fe<-c("Intercept" = 0, "cost" = .3, "job_alt" = 1, "flexibility" = .3, "difficulty"  = -2, "market_sal" = -.15, sal_by_market_sal = -.003)
+
+iter<-100
+
+
+# Initialize List
+coef_list<-list()
+
+vcov_list<-list()
+
+coef_list[[1]]<-theta
+vcov_list[[1]]<-p_h
+
+for(i in 2:iter){
+
+# Simulate People ------------------------------------------------------------------  
+# Participants have their own preferences associated with each of these positons, for now we will simulate them as being fixed (i.e., an single preference parameter adequetly summarises all people)
+# We simulate these preference distributions below. 
+people<-suppressMessages(sim_people(fixed_effects = fe, n_people = 200, n_blocks = 50, p_blocks = rep(.02, 50)))
+
+
+#########################################
+######## Simulating decisions ###########
+#########################################
+# The following code chunch has the simulated people (i.e., job applicants) choose between accepting and rejecting the simulated job offers
+# I then organize the data frame a bit more so that the meaning of variables is clear
+
+dec<-suppressMessages(sim_dec(design = design_df, people = people))
+
+dec<-dec%>%
+  ungroup()%>%
+  filter(alt == 1)%>%
+  select(job_id = BLOCK, applicant_id = id, salary = cost,  job_alt:market_sal, decision)
+  
+X<-dec[3:7]
+y<-dec["decision"]
+
+X<-cbind(1, X)
+X<-as.matrix(X)
+y<-as.matrix(y)
+  
+# Refit ------------------------------------------------------------------------------- 
+rs<-optim(par = w_0, post_ll)
+
+theta<-rs$par
+
+p_h<-posterior_hessian(theta, X, y, S_0)
+
+
+# Update Priors -----------------------------------------------------------------------
+S_0<-p_h
+m_0<-theta
+
+# Save Models -------------------------------------------------------------------------
+coef_list[[i]]<-theta
+
+vcov_list[[i]]<-p_h
+}
+```
+
+```{r}
+coef_list%>%
+  map_dbl(., 6)%>%
+  plot(., type = "l")
+
+
+vcov_list[[99]]
+```
+
+## Some great posts here
+[here](https://www.countbayesie.com/blog/2019/6/12/logistic-regression-from-bayes-theorem) and a more applied perspective [here](https://www.jamesrrae.com/post/bayesian-logistic-regression-using-brms-part-1/)

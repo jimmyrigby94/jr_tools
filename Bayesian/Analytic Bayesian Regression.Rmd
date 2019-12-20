@@ -1,0 +1,414 @@
+---
+title: "Bayesian Regression Closed Form"
+author: "James Rigby"
+date: "10/25/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Frequentist techniques attempt to maximize the $p(Y|\beta,\sigma)$. This does not rely on any priors. Bayesian technique try to estimate $p(\beta, \sigma|y, X)$ while taking into account prior information. Many representations of the analytic formulas do not illustrate how to take into account priors because it is difficult to do when moving beyond normal distributions and there are memory constraints if relying on a QR factorization with a large number of predictors. 
+
+Below I illustrate how to implement bayesian learning regression from scratch. It uses simple OLS estimates of $\hat \beta$ so it is not the most numerically stable in some conditions, but it is a useful to illustrate the analytic solutions (instead of simulation) for bayesian regression and how it can be implemented with informative priors. 
+
+Each section has a formulaic representation followed by code written in R. 
+
+
+## Basic Model
+
+$$y = X\beta +\epsilon$$
+$$\hat \beta = (X^\top X)^{-1} X^\top y$$
+```{r}
+# Defining function to solve for beta
+ols_beta<-function(y, X){
+solve(crossprod(X, X))%*%crossprod(X,y)
+}
+
+# Defining function to solve for sigma squared
+ols_sigma_sq<-function(y, X, beta){
+  resid<-y-X%*%beta
+  k<-ncol(X)
+  
+  sum(resid^2)/(nrow(X)-k)
+}
+```
+
+
+## Priors
+
+The priors are defined as follows. Interesting the analytic solution for bayesian regression does not require that we solve for $P(\beta, \sigma^2|X)$ as in the typical simulation case. Thus, I do not write functions solve for the joint and marinal probabilities. 
+
+$$\beta \sim N(\mu_0, \sigma^2\Lambda_0^{-1})$$
+$\lambda_0^{-1}$ is the inverse of the precision matrix. A large $||\Lambda_0||$ would suggest that $\mu_0$ is quite certain. 
+
+$\sigma^2$ is the residual variance. 
+
+
+$$\sigma^2 \sim Inv Gamma(a_0, b_0)$$
+$$a_0 = \frac{n-k}{2}$$
+$$b_0 = .5v_0s^2_0$$
+
+$v_0 =$ prior degrees of freedom for regression ($n-k$)
+$s^2_0 = $ prior residual variance 
+
+Interestingly $b_0$ simplifies to one half the residual sums of squares. 
+
+If no information is available $a_0$ and $b_0$ can just be set to really small values so that the distributions peak is closer to 0 (typically incorrect) with a long postive tail. 
+
+```{r}
+a<-.1
+b<-.1
+
+plt_inv_gamma<-function(x){
+  invgamma::dinvgamma(x, shape = a, rate = b)
+}
+
+plot(plt_inv_gamma, from = .01, to = 50)
+
+```
+
+
+## Update Rules (Bayesian Learning)
+The closed form solution for the update rules are as follows. These are used to define the distributions of the posteriors and sample $\beta$ and $\sigma^2$ 
+
+
+$$\mu_n = (X^\top X + \Lambda_0)^{-1} (\Lambda_0\mu_0 + X^\top y)$$
+$$\Lambda_n= X^\top X + \Lambda_0$$
+$$a_n = a_0 + \frac{n}{2}$$
+$$b_n = b_0+.5(y^\top y+\mu_0^\top \Lambda_0 \mu_0 - \mu^T_n \Lambda_n\mu_n)$$
+
+```{r }
+lambda_n<-function(X, lambda_0){
+  crossprod(X)+lambda_0
+}
+
+mu_n<-function(X, y, lambda_0, m_0){
+  l_n<-lambda_n(X, lambda_0)
+  solve(l_n)%*%(lambda_0%*%m_0+crossprod(X, y))
+  }
+
+a_n<-function(a_0, n){
+  a_0+n/2
+}
+
+b_n<-function(X, y, b_0, m_0, lambda_0){
+  l_n<-lambda_n(X, lambda_0) 
+  m_n<-mu_n(X, y, lambda_0, m_0)
+  
+  b_0 + .5*(crossprod(y)+t(m_0)%*%lambda_0%*%m_0-t(m_n)%*%l_n%*%m_n)
+}
+```
+
+## Posteriors
+
+$$\beta \sim N(\mu_n, \sigma^2\Lambda_n^{-1})$$
+
+$$\sigma^2 \sim Inv Gamma(a_n, b_n)$$
+
+
+## Bringing it Together
+
+The below function implements bayesian regression. 
+
+```{r}
+bayes_reg<-function(formula, data, lambda_0, m_0, a_0, b_0, draws = 1000){
+  
+  # Data Prep ---------------------------------------------------------------
+  f<-formula
+  
+  x<-model.matrix(f, data)
+  
+  y<-data%>%pull(as.character(f[2]))
+  
+  
+  # Parameter Extraction ----------------------------------------------------
+  
+  # number of parameters
+  p<-ncol(x)
+  
+  # number of observations
+  n<-nrow(x)
+  
+  # OLS Parameters ----------------------------------------------------
+
+  # Using ols to solve for beta and sigma_sq
+  beta<-ols_beta(y = y, X = x)
+  
+  sigma_sq<-ols_sigma_sq(y = y, X = x, beta = beta)
+  
+  # Using our update functions defined above
+  l_n<-lambda_n(X = x, lambda_0 = lambda_0)
+  m_n<-mu_n(X = x, y = y, lambda_0 = lambda_0, m_0 = m_0)
+  ap_n<-a_n(a_0 = a_0, n = n)
+  bp_n<-b_n(x, y, b_0, m_0, lambda_0)
+  
+  # Sampling Distributions ----------------------------------------------------
+  # Solving for the posterior vcov of beta
+  sigma_post<-sigma_sq*solve(l_n)
+  
+  beta_draws<-MASS::mvrnorm(n = draws, mu = m_n, Sigma = sigma_post)
+  sig_draws<-invgamma::rinvgamma(n = draws, shape = ap_n, rate = bp_n)
+  
+  # Formatting so things look pretty! ----------------------------------------------------
+
+  draws<-as.data.frame(beta_draws)
+  draws$sigma_sq<-sig_draws
+  
+  model_summary<-draws%>%
+    gather(key = "parameter", value = "value")%>%
+    group_by(parameter)%>%
+    summarise(mean = mean(value), 
+              median = median(value),
+              sd = sd(value))%>%
+    gather(key = "Statistic", value = "value", - parameter)%>%
+    spread(key = "parameter", value = "value")%>%
+    dplyr::select(Statistic, colnames(x), everything())
+
+  params<-list(lambda_n = l_n, 
+               mu_n = m_n, 
+               a_n = ap_n,
+               b_n = bp_n)
+  
+  list(summary = model_summary,
+       draws = draws, 
+       params = params)
+}
+```
+
+
+## Illustrating Bayesian Regression
+
+```{r}
+set.seed(1234)
+library(tidyverse)
+n<-20
+
+# Setting populatoin Parameters
+# B0 = 15, B1 = .3, B2 = .6, sd = .74
+b0<-15; b1<-.3; b2<-.6; b3 <- .15; rmse<-sqrt(1-sum(c(b1, b2, b3)^2))
+
+# Generating Data Frame
+my_dat<-data.frame(x1 = rnorm(n), x2 = rnorm(n), x3 = rnorm(n))%>%
+  mutate(y = b0 +b1 * x1+b2 * x2 + b3*x3+ rnorm(n, mean = 0, sd = rmse))
+
+
+# Low precision
+lambda_0<-matrix(c(10, 0, 0, 0,
+                   0, 10, 0, 0, 
+                   0, 0, 10, 0,
+                   0, 0, 0, 10), byrow = TRUE, nrow =4)
+
+# noninformative Priors
+mu_0<-c(0, 0, 0, 0)
+
+
+# Fitting Model
+m1<-bayes_reg(y~x1+x2+x3, data = my_dat, lambda_0 = lambda_0, m_0 = mu_0, a_0 = .1, b_0 = .1)
+
+# Calculating absolute deviation from population parameters
+sum(abs(as.vector(m1$summary[1, 2:5])-c(b0,b1,b2,b3)))
+```
+
+
+
+```{r}
+# Sampling the population again
+my_dat2<-data.frame(x1 = rnorm(n), x2 = rnorm(n), x3 = rnorm(n))%>%
+  mutate(y = b0 +b1 * x1+b2 * x2 + b3*x3+ rnorm(n, mean = 0, sd = rmse))
+```
+
+
+```{r}
+# Updating Priors
+lambda_0<-m1$params$lambda_n
+mu_0<-m1$params$mu_n
+a_0<-m1$params$a_n
+b_0<-m1$params$b_n
+
+# Fitting model on new sample
+m2<-bayes_reg(y~x1+x2+x3, data = my_dat2, lambda_0 = lambda_0, m_0 = mu_0, a_0 = a_0, b_0 = b_0, draws = 1000)
+
+sum(abs(as.vector(m2$summary[1, 2:5])-c(b0,b1,b2,b3)))
+```
+
+# Iterative Data Collection Process 
+
+```{r}
+loop<-1000
+
+abs_bias<-numeric(1000)
+
+# Low precision
+lambda_0<-matrix(c(.1, 0, 0, 0,
+                   0, .1, 0, 0, 
+                   0, 0, .1, 0,
+                   0, 0, 0, .1), byrow = TRUE, nrow =4)
+
+# noninformative Priors
+mu_0<-c(0, 0, 0, 0)
+
+a_0<-.1
+
+b_0 = .1
+
+
+for(i in seq_along(abs_bias)){
+  
+  # Sim Data
+  my_dat<-data.frame(x1 = rnorm(n), x2 = rnorm(n), x3 = rnorm(n))%>%
+  mutate(y = b0 +b1 * x1+b2 * x2 + b3*x3+ rnorm(n, mean = 0, sd = rmse))
+
+  m<-bayes_reg(y~x1+x2+x3, data = my_dat, lambda_0 = lambda_0, m_0 = mu_0, a_0 = a_0, b_0 = b_0, draws = 1000)
+  
+abs_bias[i]<-sum(abs(as.vector(m$summary[1, 2:5])-c(b0,b1,b2,b3)))
+  
+lambda_0<-m$params$lambda_n
+mu_0<-m$params$mu_n
+a_0<-m$params$a_n
+b_0<-m$params$b_n
+}
+
+ggplot(mapping = aes(x = 1:loop, y = abs_bias))+
+  geom_line()+
+  labs(x = "Data collection Wave", 
+       title = "Population Parameter Recovery Across 1000 Samples of 20",
+       subtitle = "Non Informative Priors Low Precision",
+       y =  "Total Absolute Devation")
+```
+
+
+```{r}
+loop<-1000
+
+abs_bias<-numeric(1000)
+
+# Low precision
+lambda_0<-matrix(c(1, 0, 0, 0,
+                   0, 1, 0, 0, 
+                   0, 0, 1, 0,
+                   0, 0, 0, 1), byrow = TRUE, nrow =4)
+
+# noninformative Priors
+mu_0<-c(0, 0, 0, 0)
+
+a_0<-.1
+
+b_0 = .1
+
+
+for(i in seq_along(abs_bias)){
+  
+  # Sim Data
+  my_dat<-data.frame(x1 = rnorm(n), x2 = rnorm(n), x3 = rnorm(n))%>%
+  mutate(y = b0 +b1 * x1+b2 * x2 + b3*x3+ rnorm(n, mean = 0, sd = rmse))
+
+  m<-bayes_reg(y~x1+x2+x3, data = my_dat, lambda_0 = lambda_0, m_0 = mu_0, a_0 = a_0, b_0 = b_0, draws = 1000)
+  
+abs_bias[i]<-sum(abs(as.vector(m$summary[1, 2:5])-c(b0,b1,b2,b3)))
+  
+lambda_0<-m$params$lambda_n
+mu_0<-m$params$mu_n
+a_0<-m$params$a_n
+b_0<-m$params$b_n
+}
+
+ggplot(mapping = aes(x = 1:loop, y = abs_bias))+
+  geom_line()+
+  labs(x = "Data collection Wave", 
+       title = "Population Parameter Recovery Across 1000 Samples of 20",
+       subtitle = "Non Informative Priors Mid Precision",
+       y =  "Total Absolute Devation")
+```
+
+```{r}
+loop<-1000
+
+abs_bias<-numeric(1000)
+
+# Low precision
+lambda_0<-matrix(c(20, 0, 0, 0,
+                   0, 20, 0, 0, 
+                   0, 0, 20, 0,
+                   0, 0, 0, 20), byrow = TRUE, nrow =4)
+
+# noninformative Priors
+mu_0<-c(0, 0, 0, 0)
+
+a_0<-.1
+
+b_0 = .1
+
+
+for(i in seq_along(abs_bias)){
+  
+  # Sim Data
+  my_dat<-data.frame(x1 = rnorm(n), x2 = rnorm(n), x3 = rnorm(n))%>%
+  mutate(y = b0 +b1 * x1+b2 * x2 + b3*x3+ rnorm(n, mean = 0, sd = rmse))
+
+  m<-bayes_reg(y~x1+x2+x3, data = my_dat, lambda_0 = lambda_0, m_0 = mu_0, a_0 = a_0, b_0 = b_0, draws = 1000)
+  
+abs_bias[i]<-sum(abs(as.vector(m$summary[1, 2:5])-c(b0,b1,b2,b3)))
+  
+lambda_0<-m$params$lambda_n
+mu_0<-m$params$mu_n
+a_0<-m$params$a_n
+b_0<-m$params$b_n
+}
+
+ggplot(mapping = aes(x = 1:loop, y = abs_bias))+
+  geom_line()+
+  labs(x = "Data collection Wave", 
+       title = "Population Parameter Recovery Across 1000 Samples of 20",
+       subtitle = "Non Informative Priors Mid Precision",
+       y =  "Total Absolute Devation")
+```
+
+```{r}
+loop<-1000
+
+abs_bias<-numeric(1000)
+
+# B0 = 15, B1 = .3, B2 = .6, sd = .74
+
+
+# HIGH precision
+lambda_0<-matrix(c(20, 0, 0, 0,
+                   0, 20, 0, 0, 
+                   0, 0, 20, 0,
+                   0, 0, 0, 20), byrow = TRUE, nrow =4)
+
+# informative Priors
+mu_0<-c(15, .13, .6, .15)
+
+a_0<-5
+
+b_0 = .5*(.74)^2*10
+
+
+for(i in seq_along(abs_bias)){
+  
+  # Sim Data
+  my_dat<-data.frame(x1 = rnorm(n), x2 = rnorm(n), x3 = rnorm(n))%>%
+  mutate(y = b0 +b1 * x1+b2 * x2 + b3*x3+ rnorm(n, mean = 0, sd = rmse))
+
+  m<-bayes_reg(y~x1+x2+x3, data = my_dat, lambda_0 = lambda_0, m_0 = mu_0, a_0 = a_0, b_0 = b_0, draws = 1000)
+  
+abs_bias[i]<-sum(abs(as.vector(m$summary[1, 2:5])-c(b0,b1,b2,b3)))
+  
+lambda_0<-m$params$lambda_n
+mu_0<-m$params$mu_n
+a_0<-m$params$a_n
+b_0<-m$params$b_n
+}
+
+ggplot(mapping = aes(x = 1:loop, y = abs_bias))+
+  geom_line()+
+  labs(x = "Data collection Wave", 
+       title = "Population Parameter Recovery Across 1000 Samples of 20",
+       subtitle = "Informative Priors",
+       y =  "Total Absolute Devation")
+
+```
+
