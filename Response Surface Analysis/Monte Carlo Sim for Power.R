@@ -141,10 +141,7 @@ resp_surf<-function(dep_var = NULL, fit_var = NULL, control = NULL, data = NULL,
   return(out)
 }
 
-plot_surf<-function(obj = NULL, max.x = NULL, min.x = NULL, max.y = NULL, min.y = NULL, inc = NULL, phi = 45, theta = 315, llabels =FALSE, xlab=NULL, ylab=NULL, zlab=NULL, ...){
-  if((theta>360|theta<270) & !theta == 0){
-    warning("Perspective may not align with the line of congruence. Consider retaining a theta between 360 and 270")
-  }
+plot_ly_surf<-function(obj = NULL, max.x = NULL, min.x = NULL, max.y = NULL, min.y = NULL, inc = NULL,  xlab=NULL, ylab=NULL, zlab=NULL, showscale = FALSE){
   
   #Copies the model generated in the resp_surf function for use here
   eq<-obj[["model"]]
@@ -181,143 +178,171 @@ plot_surf<-function(obj = NULL, max.x = NULL, min.x = NULL, max.y = NULL, min.y 
     zlab<-colnames(eq$model)[1]
   }
   
-  #Creates a wire plot
-  persp(x = x, y = y, z = z, phi = phi, theta = theta, shade = .5, 
-        xlab = xlab, ylab = ylab, zlab = zlab, ...)-> res
-  round(res, 3)
-  #Plots the line of congruence
-  lines(trans3d(x = x, y = x, z = min(z), pmat = res), col = "black", lty = 2)
+  plotly::plot_ly(x = x, y = y, z = ~z, showscale = showscale)%>% 
+    plotly::add_surface()%>%
+    plotly::add_trace(x = x[x==y], y = y[x==y], z = diag(z), line = list(color = "black"),type = 'scatter3d', mode = 'lines', name = "Line of Congruence")%>%
+    plotly::add_trace(x = x, y = y[length(y):1], z = z[row(z) == (ncol(z)-col(z)+1)], line = list(color = "black", dash = 'dash'),type = 'scatter3d', mode = 'lines', name = "Line of Incongruence")%>%
+    plotly::layout(scene = list(xaxis = list(title = xlab), 
+                                yaxis = list(title = ylab), 
+                                zaxis = list(title = zlab)))%>%
+    plotly::add_trace(x = x, 
+                      y = obj$princ_axis$Estimate[1]+obj$princ_axis$Estimate[2]*x,
+                      z = min(z),
+                      line = list(color = "red"),type = 'scatter3d', mode = 'lines', name = "First Principal Axis")%>%
+    plotly::add_trace(x = x, 
+                      y = obj$princ_axis$Estimate[3]+obj$princ_axis$Estimate[4]*x,
+                      z = min(z),
+                      line = list(color = "red", dash = 'dash'),type = 'scatter3d', mode = 'lines', name = "Second Principal Axis")
+}
+
+gen_response_surf_x<-function(n, cor_mat, x_names=NULL){
+  sample<-n
   
-  #grid on (x,y) plane
-  for (ix in seq(min.x, max.x, by = inc)) lines (trans3d(x = ix, y = seq(min.y, max.y, by = inc), z = min(z), pmat = res), col = "black", lty ="solid")
-  for (iy in seq(min.y, max.y, by = inc)) lines (trans3d(x = seq(min.y, max.y, by = inc), y = iy, z = min(z), pmat = res), col = "black", lty ="solid")
-  
-  #plots the line of incongruence
-  lines(trans3d(x = x, y = -x, z = min(z), pmat = res), col = "black", lty = 4)
-  #Labels for the line of congruence/incongruence
-  if(llabels ==TRUE){
-    text(trans3d(x =min(x)+1.75, y = min(y)+1.5, z = min(z), pmat = res), labels = "Line of Congruence", cex = .75, srt =70)
-    text(trans3d(x =min(x)+1.5, y = max(y)-1.75, z = min(z), pmat = res), labels = "Line of Incongruence", cex = .75, srt =350)
+  suppressMessages(
+    sim_help<-MASS::mvrnorm(sample, c(0,0), cor_mat)%>%
+      as_tibble(.name_repair = "unique")%>%
+      rename(x1 = ...1,
+             x2 = ...2)%>%
+      mutate(x1_sq = x1^2,
+             x2_sq = x2^2,
+             int = x1*x2)
+  )
+  if(!is.null(x_names)){
+    colnames(sim_help)<-c(x_names, paste0(x_names, "_sq"), paste0(x_names, collapse = "*"))
   }
-  legend(x= "bottomleft", legend = c("Line of Congruence", "Line of Incongruence"), xpd = TRUE,cex = .75,  bty = "n", lty = c(2,4))
   
+  sim_help
+}
+
+gen_response_surf_y<-function(x_data, beta, sigma=NULL, y_name=NULL){
+  
+  if(is.null(y_name)){
+    y_name<-"y"
+  }
+  
+  if(is.null(sigma)){
+    eps<-0
+  }else{
+    eps<-rnorm(nrow(x_data), 0, sigma)
+  }
+  
+  x_data[y_name]<-as.vector(as.matrix(x_data)%*%beta+eps)
+  
+  x_data
+}
+
+find_sig<-function(n, cor_mat, beta, target_var_y = 1, iter=10000){
+  
+  sig_vec<-c()
+  
+  for(i in 1:iter){
+    simmed_data<-gen_response_surf_x(n, cor_mat)%>%
+      gen_response_surf_y(beta = beta)
+    
+    sig_vec[[i]]<-target_var_y-var(simmed_data$y)
+    
+  }
+  
+  sig_val<-mean(sig_vec)
+  
+  message("To generate an outcome variable with a variance of ", target_var_y, " given your betas, use a error sd of")
+  
+  sig_val
 }
 
 
-# simulates leader follower dependence where ICC = .09
-iter<-10000
+# Defining Power Assumptions ----------------------------------------------
 
 # Define cor_mat
 cor_mat<-matrix(c(1, 0,
                   0, 1), 
                 byrow = TRUE, 2,2)
-# Define population slope and intercepts
-beta<-c(0, 0, -.025, -.025, .05)
 
-# Calculate line of congruence line of discongruence
-congruence_lin <-sum(beta[1:2])
-congruence_quad<- sum(beta[3:5])
-incongruence_lin<-beta[1]-beta[2]
-incongruence_quad<- sum(beta[3:4])-beta[5]
 
-# Janky way to solve for population epsilon -------------------------------
-# No analytic solution for covariance of product distribution (interaction) developed
-# Variance of quadratic can be solved analytically, covariances cannot
-# This means epsilon must be solved for using sims given total variance of y and subtracting variance of y_hat
-sample<-1000
-eps_list<-c()
-rest_eps_list<-c()
+# Defining betas
+beta<-list(c(0, 0, -.075, -.075, .15),
+           c(0, 0, -.05, -.05, .1),
+           c(0, 0, -.025, -.025, .05))
 
-# for i in iterations
-for(i in 1:iter){
-  # Sim data
-  suppressMessages(
-  sim_help<-MASS::mvrnorm(sample, c(0,0), cor_mat)%>%
-    as_tibble(.name_repair = "unique")%>%
-    rename(precep_help = ...1,
-           nurse_help = ...2)%>%
-    mutate(precep_help_sq = precep_help^2,
-           nurse_help_sq = nurse_help^2,
-           int = precep_help*nurse_help)
-  )
+# Increments of sample size ranges
+sample_range <- seq(100, 1000, by = 50)
+
+# Initalizes Results
+power_results<-data.frame()
+
+# iterates through betas
+for(b in 1:length(beta)){
   
-  sim_help$mastery_hat<-as.matrix(sim_help)%*%beta
+  message("Beta: ", b, " of ", length(beta))
   
-  rest_eps_list<-1-var(as.matrix(sim_help%>%select(precep_help, nurse_help))%*%beta[1:2])
-  eps_list[i] <- 1-var(sim_help$mastery_hat)
+  # Finds appropriate error for each beta
+  error_sig<-find_sig(n = 1000, cor_mat = cor_mat, beta = beta[[b]], target_var_y = 1)
   
+  # iterates through sample sizes
+  for(s in 1:length(sample_range)){
+    
+    message("Sample Size: ", s, " of ", length(sample_range))
+    # Initializes iteration data frame starting new each time
+    output<-data.frame()
+    
+    # Runs iter iterations Monte Carlos samples for each beta sample size combo
+    for(i in 1:iter){
+      
+      # simulates data for iteration i
+      sim_data<- gen_response_surf_x(sample_range[s], cor_mat = cor_mat, x_names = c("precep_help", "nurse_help"))%>%
+        gen_response_surf_y(beta = beta[[b]], sigma = error_sig, y_name = "mastery")
+      
+      # Runs response surface model
+      m<-resp_surf(dep_var = "mastery", fit_var = c("precep_help", "nurse_help"), data = sim_data, robust = FALSE)
+      
+      # Pulls out lines of interest
+      output<-bind_rows(output, m$loi)
+    }
+    
+
+     # Calculates Power Results for model
+     power_results<- bind_rows(power_results, output%>%
+                                 group_by(Line_of_Interest, Parameter)%>%
+                                 summarise(Estimate = mean(Estimate), 
+                                           Power = mean(P_value<.05))%>%
+                                 mutate(`Sample Size` = sample_range[s],
+                                        `Effects` = paste(beta[[b]], collapse = "_"))
+     )
+     
+  }
 }
 
-mean(rest_eps_list)-mean(eps_list)
-# Defines Error Variance
-err_var <- mean(eps_list)
+sigs<-c()
+  for(b in 1:length(beta)){
+    sigs[b]<-find_sig(n = 1000, cor_mat = cor_mat, beta = beta[[b]], target_var_y = 1)
+  }
 
-# Main loop to solve for power --------------------------------------------
-
-# Define the range of sample Sizes
-sample_range <- seq(100, 500, by = 50)
-
-results_list<-list()
-
-# Iterates over sample sizes
-for(sample_size in sample_range){
-
-# Initializes data.frame to store power output
-output<-data.frame()
-
-# for i in iterations
-for(i in 1:iter){
-  
-  # Sim data
-suppressMessages(
-  sim_help<-MASS::mvrnorm(sample_size, c(0,0), cor_mat)%>%
-    as_tibble(.name_repair = "unique")%>%
-    rename(precep_help = ...1,
-           nurse_help = ...2)%>%
-    mutate(precep_help_sq = precep_help^2,
-           nurse_help_sq = nurse_help^2,
-           int = precep_help*nurse_help)
-)
-  
-  sim_help$mastery<-as.matrix(sim_help)%*%beta+rnorm(sample_size, 0, sqrt(err_var))
-
-  m<-resp_surf(dep_var = "mastery", fit_var = c("precep_help", "nurse_help"), data = sim_help, robust = FALSE)
-  
-  output<-bind_rows(output, m$loi)
-  
-}
-
-# Estimates effects for the lines of interest
-results_list[[as.character(sample_size)]]<-output%>%
-                                    group_by(Line_of_Interest, Parameter)%>%
-                                    summarise(Estimate = mean(Estimate), 
-                                              Power = mean(P_value<.05))
-
-}
+1-sigs
 
 
+p<-power_results%>%
+  filter(Parameter == "Quadratic", Line_of_Interest == "Line of Incongruence")%>%
+  mutate(Effect = case_when(Effects == "0_0_-0.025_-0.025_0.05" ~ "Small",
+                            Effects == "0_0_-0.05_-0.05_0.1" ~ "Medium",
+                            Effects == "0_0_-0.075_-0.075_0.15" ~ "Large"))%>%
+  ggplot(aes(x = `Sample Size`, y  = Power, lty = Effect))+
+  geom_smooth(se = FALSE, color = "black")+
+  theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        axis.line.x = element_line(),
+        axis.line.y = element_line())+
+  geom_hline(yintercept = .8, lty = 4)+
+  geom_vline(xintercept = 202, lty = 1)+
+  geom_vline(xintercept = 407, lty = 2)+
+  labs(title = "Estimated Power Curves for Quadratic Effect Along Line of Incongruence",
+       subtitle = "Generated using 10,000 Monte Carlo Samples per Condition",
+       caption = "Note. Sample size was changed by increments of 50. Curves are generated by a loess smoother.")+
+  scale_x_continuous(breaks = seq(100, 1000, by = 50))
 
-incon_power<-map_dfr(sample_range, function(n){
-  results_list[[as.character(n)]][4,]%>%
-    mutate(sample_size = n)
-  
-})
+p
 
-# Plotting Hypothesized Models
-# Sim data
-sample_size<-20000
-suppressMessages(
-  sim_help<-MASS::mvrnorm(sample_size, c(0,0), cor_mat)%>%
-    as_tibble(.name_repair = "unique")%>%
-    rename(precep_help = ...1,
-           nurse_help = ...2)%>%
-    mutate(precep_help_sq = precep_help^2,
-           nurse_help_sq = nurse_help^2,
-           int = precep_help*nurse_help)
-)
-
-
-sim_help$mastery<-as.matrix(sim_help)%*%beta+rnorm(sample_size, 0, sqrt(err_var))
+sim_help<-gen_response_surf_x(1000, cor_mat, x_names = c("precep_help", "nurse_help"))%>%
+            gen_response_surf_y(beta = beta[[1]], y_name = "mastery")
 
 m<-resp_surf(dep_var = "mastery", fit_var = c("precep_help", "nurse_help"), data = sim_help, robust = FALSE)
 
