@@ -13,7 +13,7 @@ test<-decisionr::sim_people(c("cost" = -.05, "morning" = 2), n_people = 1000, n_
 
 
 # Multinomial Regression from Scratch -------------------------------------
-my_mnl<-function(formula=NULL, id = NULL, data =NULL, tol = 1e-05){
+my_mnl<-function(formula=NULL, id = NULL, data =NULL, grad_tol = 1e-06){
   
 
 # Error Catching: Formula and Data arguments required ---------------------
@@ -100,7 +100,6 @@ my_mnl<-function(formula=NULL, id = NULL, data =NULL, tol = 1e-05){
   # Initialize ll and dif
   ll_old<-cost(theta)
   dif <-ll_old
-  
 
   
   # Initiaize first deriviative and second derivative
@@ -116,7 +115,10 @@ my_mnl<-function(formula=NULL, id = NULL, data =NULL, tol = 1e-05){
   # Update Theta for first 
   theta_up<- theta - solve(d2)%*%d1
   
-  while(dif>tol){
+  # Intialize gradient
+  grad<--(t(d1)%*%solve(d2)%*%d1)
+  
+  while(grad > grad_tol){
     # Update theta
     theta<-as.vector(theta_up)
     
@@ -144,6 +146,7 @@ my_mnl<-function(formula=NULL, id = NULL, data =NULL, tol = 1e-05){
     # Update dif and overwrite old ll
     dif<-ll_old-ll_new
     ll_old<-ll_new
+    grad<--(t(d1)%*%solve(d2)%*%d1)
   }
   
   # Calculating SE from Hessian
