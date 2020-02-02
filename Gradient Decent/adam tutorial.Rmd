@@ -1,0 +1,352 @@
+---
+title: 'Adam: Adaptive Moments Gradient Descent'
+author: "James Rigby"
+date: "1/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+set.seed(1234)
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## An Introduction to Online Optimization
+
+You may have heard before that every machine learning task or statistical procedure is an optimization problem. What does this mean? Well, statistical models make assumptions about how a set of predictors or independent variables are related to an outcome by constraining them to be linearly related, or apply some other basis function. Furthermore, the models make assumptions about what the remainder or error terms look like. Based on these assumptions there are a set of unknown parameters in the model that we need to solve for either analytically or using an iterative algorithm. Let's take a look at logistic regression. 
+
+
+$$p(y = 1|X) = \frac{1}{1+e^{-X\beta}}$$
+
+By assuming that the log odds of the categorical outcome is linearly related to the independent variables we define p unknown parameters - the regression weights. Previously we used iteratively reweighted least squares or Newtonian optimization to solve for the values, but is that most appropriate for all scenarios? Consider the following situations: 
+
+    1. You are working with a classification problem that involves over 30 **million** observations. You have the sneaking suspicion that some of those observations contain redundant information about the hyperplane that separates the different classes. Newtonian optimization schemes, however, require that you solve for the gradient and hessian for **all** observations at every single iteration. How can you speed up the algorithm?
+    
+    2. The project you are working on has streaming data (i.e., new information is perptually rolling in). You think your original training set offers insight into the classification problem but want weights to be iteratively updated with each new wave of information. How can you accomidate updates?
+    
+These scenarios are what have motivated online convex optimization. The goal of these optimization methods is to select a set of unknown parameters, $\theta$, at time t that minimize the difference between the cost the model has incurred and the best choice in hindsight ($\theta^*$)
+
+$$regret =\sum_{t=1}^T[f_t(\theta_t)-f_t(\theta^*)]$$
+
+## Adam: Adaptive Moment Gradient Decent
+Adam is a relatively new and well-used online optimization algorithm that builds on standard gradient decent. This makes it necessary to first understand the foundations of gradient decent. As mentioned above, logistic regression represents an optimization problem where we are attempting to identify the regression weights that maximize the likelihood of observing the data we have observed. Different values of the regression weights will result in different values for the likelihood function, but because the likelihood is concave, there is a unique solution that maximizes the likelihood. Gradient decent is an algorithm that relies on the first derivatives  of the likelihood function (i.e., first-order method) to solve for the regression weights. In short, gradient decent uses the first derivative of the likelihood function to approximate a very small portion of the likelihood surface. It then takes a step within that small space towards the maximum and updates the weights. After sometimes hundreds of iterations it converges to a point where the gradient is so small, we are confident it has found the unique solution. The plot below illustrates the intuition of this algorithm, the derivatives for each iteration are plotted to illustrate how they approximate the objective function. Written in quasi-code: 
+
+```{r, eval = FALSE}
+require objective_function, derivative_function, starting_value, threshold, step
+  
+ # Initialize Values
+  theta<-starting_value
+  obj_val<-objective_function(theta)
+  delta_objective<-threshold+1
+  
+ # Main Loop
+  while delta_objective>threshold do
+  deriv<-derivative_function(theta)
+  theta_new<- theta+step*deriv
+  delta_objective<-objective_function(theta)-objective_function(theta_new)
+  theta<-theta_new
+  
+return theta  
+```
+
+
+
+
+```{r, echo = FALSE}
+plot_fun<-function(x){-x^2+2*1.3*x-1.3^2}
+deriv<-function(x){-2*x+2.6}
+step<-.09
+start<--1
+
+plot_data<-data.frame(estimate = start, value = plot_fun(start), i = 1, derivative = deriv(start))
+
+
+
+for(i in 2:20){
+  
+  plot_data[i,1]<-plot_data$estimate[i-1]+step*plot_data$derivative[i-1]
+  plot_data$value[i]<-plot_fun(plot_data$estimate[i])
+  plot_data$derivative[i]<-deriv(plot_data$estimate[i])
+  plot_data$i[i]<-i
+
+  
+}
+
+plot_data<-plot_data%>%
+  rowwise()%>%
+  mutate(upper_y = deriv(estimate)*step+plot_fun(estimate+.75), 
+         lower_y = deriv(estimate)*step+plot_fun(estimate-.75), 
+         upper_x = estimate+.75, 
+         lower_x = estimate-.75)
+
+
+p<-ggplot(data = plot_data, aes(x = estimate, y = value, color = i))+
+  lims(x =c((-5+1.3),(5+1.3)))+
+  stat_function(fun = plot_fun, aes(color = NULL))+
+  labs(y = "Likelihood",
+       x = "Regression Weight Estimate",
+       title = "An Illustration of Gradient Decent")+
+  geom_segment(aes(x=lower_x, y = lower_y, xend = upper_x, yend = upper_y, color = i))+
+  geom_point(color = "black")+
+  theme(panel.grid = element_blank())+
+  guides(color = guide_colourbar(title = "Iteration"))
+
+plotly::ggplotly(p)
+```
+
+The Adam algorithm differs from traditional gradient decent in a few key ways. First, instead of calculating the derivative for the entire sample, each iteration of Adam uses a subset or batch of the available data, or, if the data is streaming, a set of new observations. This means that the algorithm requires fewer operations to solve the function and can accommodate online applications. Second, because the batch approach makes the optimization process noisier than traditional gradient decent, the algorithm uses an exponential moving average of gradients to update the parameters. Some have compared this moving average to momentum, where the gradients of previous batches carry forward through iterations of the model. Finally, the algorithm scales the moving average of gradients by a moving average of the uncentered second moments (or the squared gradients). The authors state that this acts as a signal to noise ratio scaling the algorithms steps so that when uncertainty about the gradient is high (several iterations have had large gradients), the effective updates of theta are smaller. Finally, because the moving averages of the derivative and second moment of the derivative will be biased towards 0 for early iterations, the authors included a bias correction that is dependent on the scaling of the iterations. for the quasi code and a more detailed discussion of convergence rates and contrasts with other algorithms I direct you all to the original paper: 
+
+Kingma, D. P., & Ba, J. (2014). Adam: A method for stochastic optimization. arXiv preprint arXiv:1412.6980.
+
+## Implementing Adam!
+
+Below, I adapt the logistic regression functions I created [here](https://j-rigby.com/tutorials/Logistic-Regression.html) to incorporate the Adam algorithm. I tried to annotate the code to explain why different lines are included. 
+
+```{r}
+
+# Functions created and explained at https://j-rigby.com/tutorials/Logistic-Regression.html-------------------
+
+# Estiamtes log-odds of outcome
+v<-function(X, beta){
+  v<-X%*%beta
+  v
+}
+
+# Estimated Probability through sigmoid transformation
+p_hat<-function(v){
+  
+  p<-1/(1+exp(-v))
+  
+  p
+}
+
+# Calculates derivative of likelihood wrt beta
+# Added control flow for cases when matrix multiplication is not appropriate
+deriv<-function(X, y, p){
+  if(length(X)>1){
+   - t(X)%*%(y-p)
+  }else{
+   - X*(y-p)
+  }
+}
+
+# Estimates Negative log likelihood
+ll<-function(y, p){
+  -sum(y*log(p)+(1-y)*log(1-p))
+}
+
+# a = step size
+# b1 = gradient smoothing weight
+# b2 = second moment smoothing weight
+# eps = noise added to gradient
+# minibatch = minibatch size
+# iter = max epochs
+# warmup_pass = minimum mini-batches befor stoprule kicks in
+# X = Matrix of IVS
+# y = Matrix of outcomes
+
+adam_logistic_reg<-function(a = .001, b1 = .9, b2 = .999, eps = 10e-8, minibatch = 128, iter = 100, warmup_pass= 500, X, y){
+  
+  # Initializing Parameters -------------------------------------------
+  i<-1 # Counts the number of minibatches
+  theta<-numeric(ncol(X)) # Initializes theta
+  v_hat<-numeric(length = minibatch) # Solves logodds for theta
+  p<-rep(.5, times = minibatch) # Solved predicted probabilities for theta
+
+  m1<-numeric(ncol(X)) # Initalizes first moment (exponential moving average of gradients)
+  m2<-numeric(ncol(X)) # Initalizes second moment (exponential moving average of squared-gradients)
+  
+  ll_new<-ll(y, p) # Initalizes likelihoods (the proportion of the likelihoods are used as the stopping criterea)
+  ll_old<-ll(y, p) 
+  ll_dif<-0 
+
+  # Initializes vector to store likelihoods to see how quick algorithm converges
+  ll_hist<-c()
+  ll_hist[i]<-ll_new
+  j<-1
+  
+  # Stochastic optimization is noisier than traditional gradient decent
+  # I smooth parameter estimates using and expontial moving average initialized below
+  theta_bar<-numeric(ncol(X))
+  
+  # Implementation on large data sets can take multiple passes or epoch, I include an outer loop below
+  # Stopping rule is that the difference of likelihoods for j and j-1 needs to be really close to 0
+  # This is implemented after after the algorithm warmsup
+  
+  while((ll_dif>(1e-10)|i<warmup_pass) & j<iter){
+    
+    # Initalizise minibatch sample
+    # remain object denotes the observations yet to be batched
+    remain<-1:length(y)
+    
+    # Inner loop that resets the remaining observations after each pass/epoch
+    while(length(remain)>0){
+      
+      # Subsetting into minibatches
+      # The use observations are those used in the current minibatch
+      use<-sample(remain, size = min(c(length(remain),minibatch)))
+      
+      # the remain observations are yet to be used
+      remain<-remain[!remain %in% use]
+      
+      # The model matrices are subset using the randomly sampled minibatch
+      use_X<- X[use, ]
+      use_y<- y[use, ]
+      
+      # Prerequisites for the gradient function are calculated
+      v_hat<-v(use_X, theta)
+      p<-p_hat(v_hat)
+      
+      # Calculating Gradient with respect to batch
+      batch_grad<-deriv(X = use_X, y = use_y, p = p)
+      
+      # The exponentially weighted moving average of moments is created
+      m1<-b1*m1+(1-b1)*batch_grad
+      m2<-b2*m2+(1-b2)*(batch_grad*batch_grad)
+      
+      # Correcting for bias towards 0 from early iterations
+      m1_bias_cor<-m1/(1-b1^i)
+      m2_bias_cor<-m2/(1-b2^i)
+
+      # Updating theta
+      theta<-theta-a*m1_bias_cor/(sqrt(m2)+eps)
+      
+      # Exponential moving average of thetas to correct for noisy optimization of batches
+      theta_bar<-(b2*theta_bar+(1-b2)*theta)
+      
+      # Solving for likelihood and ratio
+      v_whole<-v(X, theta)
+      p_whole<-p_hat(v_whole)
+      ll_whole<-ll(y, p_whole)
+      ll_dif<-(1-b2)*ll_dif+b2*(ll_old-ll_whole)
+      
+      # Updating likelihood
+      ll_old <- ll_whole
+      
+      i<-i+1
+      
+      # storeing likelihood
+      ll_hist[i]<-ll_whole
+    }
+    j<-j+1
+  }
+  
+ list(theta = theta,
+      theta_bar = theta_bar,
+      ll_hist = ll_hist,
+      m1 = m1, 
+      m2 = m2, 
+      i = i,
+      b1 = b1,
+      b2 = b2)
+}
+```
+
+```{r, message=FALSE, warning=FALSE, echo = FALSE}
+library(tidyverse)
+library(decisionr)
+library(knitr)
+#########################################
+######## Generating Jobs ################
+#########################################
+
+# Setting the random seed
+set.seed(1234)
+
+#Initializing Vector of Zeros
+Intercept<-flexibility<-difficulty<-job_alt<-salary<-market_sal<-vector(mode = "numeric", 100)
+
+# Populating every other vector with job characteristics
+# Each vector contains information on 50 jobs, but since individuals are choosing between accepting a job and not accepting a job, there is an additional 50 rows for individuals not accepting a job
+# Jobs vary on four dimensions job_alt, difficulty, flexibility and salary
+salary[seq(from = 2, to = 100, by = 2)]<-rnorm(50, 30, 5)
+job_alt[seq(from = 2, to = 100, by = 2)]<-sample(1:4, 50, replace = TRUE, prob = c(.5, .3, .1, .1))
+difficulty[seq(from = 2, to = 100, by = 2)]<-sample(1:4, 50, replace = TRUE, prob = c(.3, .5, .1, .1))
+flexibility[seq(from = 2, to = 100, by = 2)]<-sample(1:4, 50, replace = TRUE, prob = c(.7, .1, .07, .13 ))
+Intercept[seq(from = 2, to = 100, by = 2)]<-1
+market_sal[seq(from = 2, to = 100, by = 2)]<-salary[seq(from = 2, to = 100, by = 2)]+rnorm(n = 50, mean = 0, sd = 5)
+
+
+# Thus the job feature matrix has one row associated with the job and one row associated with not the job
+design_df<-data.frame(BLOCK = rep(1:50, each = 2), 
+                              QES = rep(1:50, each = 2),
+                              alt = rep(0:1, times = 50),
+                              Intercept = Intercept,
+                              cost = salary,
+                              job_alt = job_alt,
+                              difficulty = difficulty,
+                              flexibility = flexibility,
+                              market_sal = market_sal)
+```
+
+```{r, message=FALSE, warning=FALSE, echo = FALSE}
+#################################################
+######## Simulating person preferences ##########
+#################################################
+
+# Participants have their own preferences associated with each of these positons, for now we will simulate them as being fixed (i.e., an single preference parameter adequetly summarises all people)
+# We simulate these preference distributions below. 
+people<-sim_people(fixed_effects = c("Intercept" = 0, "cost" = .3, "job_alt" = 1, "flexibility" = .3, "difficulty"  = -2, "market_sal" = -.15), n_people = 100000, n_blocks = 50, p_blocks = rep(.02, 50))
+
+
+#########################################
+######## Simulating decisions ###########
+#########################################
+# The following code chunch has the simulated people (i.e., job applicants) choose between accepting and rejecting the simulated job offers
+# I then organize the data frame a bit more so that the meaning of variables is clear
+
+dec<-sim_dec(design = design_df, people = people)%>%
+  ungroup()%>%
+  filter(alt == 1)%>%
+  select(job_id = BLOCK, applicant_id = id, salary = cost,  job_alt:market_sal, decision)
+```
+
+
+
+
+We will use a similar, although larger, data set to my previous post on logistic regression post. It contains job offer acceptance and rejection information on 100,000 applicants. This test is meant to simulate scenario 1 above; a large data set with semi-redundant information. 
+
+```{r, warning = FALSE}
+# Setting up matrices
+X<-dec[3:7]
+y<-dec["decision"]
+
+X<-cbind(1, X)
+X<-as.matrix(X)
+y<-as.matrix(y)
+
+# Running test of adam logistic regression
+test<-adam_logistic_reg(minibatch = 128, X = X, y = y, iter = 10000, a  = .001)
+```
+
+
+Note that the likelihood has some noise throughout the algorithm. This occurs when the mini batch gradients  suggests the optimum are is in a different direction than the algorithm has been moving. The noise is both a useful property and a challenge. For example, if you are trying to optimize a non-convex function where there is the possibility of coming to a local solution (instead of the global solution), the noise in tandem with the momentum can bump the estimate out of that local trough. This means, however, that the final solution has some noise to it as well. This is why I used a exponentially weighted average of parameters to smooth out some of the noise and pool the previous estimates. This implementation is no match for the blazing fast `glm`. This isn't surprising as most iterative functions in base R has significant overhead. Comparing Adam to the Newtonian method written in my previous post is insightful, however! Adam converges while the Newtonian update struggles inverting the hessian. 
+
+```{r, echo = FALSE}
+# Plotting the function
+ggplot(data = NULL, aes(x = 1:length(test$ll_hist)/(length(y)/128), y = test$ll_hist))+
+  geom_line()+
+  labs(x = "Epoch",
+       y = "Likelihood",
+       title = "Objective function across passes on the data")+
+  theme(panel.grid = element_blank())
+```
+
+
+
+```{r}
+# Population Parameters
+c("Intercept" = 0, "cost" = .3, "job_alt" = 1, "flexibility" = .3, "difficulty"  = -2, "market_sal" = -.15)
+
+# Last iteration of theta
+test$theta
+
+## Smoothed theta
+test$theta_bar
+
+## Comparions with glm results
+glm(decision ~ salary+job_alt+difficulty+flexibility+market_sal, data = dec, family = "binomial")
+```
+
+
+
