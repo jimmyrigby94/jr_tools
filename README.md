@@ -9,10 +9,5 @@ Those of us who work with large amounts of data use dozens of packages to get th
 
 ## Purpose
 <div class = format_text>
-The purpose of this repository is to develop and document a set of user defined functions that highlight the complexity of implementing statistical analyses and data management functions. Each script will define **one** function that serves **one** purpose and include extensive comments. Eventually, I hope to include markdown documents more fully explicating the algorithms that are being implemented and why certain elements of code were included. Many of these functions and scripts are derived from other packages, papers, and blog posts although some are original implementations written by yours truly or my colleague. I will do my best to acknowledge all of the others whose work has contributed to this material.
-</div>
-
-## TLDR
-<div class = format_text>
-In short, this repository is dedicated to providing a set of open source learning tools that highlight how analytical and data management functions *can* be implemented to solve specific analytic problems.
+The purpose of this repository is to test out a variety of learning tools, statistical concepts, and visualizations. Many of these scripts are just side projects and those that turn into something real, I pull out into a separate repository. In other words, this is just a place for me to keep my notes on a bunch of algorithms and methods I find cool or interesting. Many of these projects are under development and have weird issues and boundary cases. They are intended only as illustrations of methods and individual learning and not for production. 
 </div>
