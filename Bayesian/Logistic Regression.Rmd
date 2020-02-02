@@ -545,41 +545,212 @@ Come back for part two of this post where we learn how to implement a couple of 
 
 
 ## A Quick Review
-In my last post, I illustrated how to write a function for fitting logistic regression, a common model for classifying dichotimous categorical outcomes. The model predicted the probability that y equaled class 1 p(y = 1) by applying a sigmoid transformation to the linear combination of predictors($\frac{1}{(1+e^{-(X\beta+e)})}$). Regression weights are chosen such that the likelihood of the observed data, given beta ($p(y|\beta)$), is maximized. 
+  In my last post, I illustrated how to write a function for fitting logistic regression, a common model for classifying dichotimous categorical outcomes. The model predicted the probability that y equaled class 1 ($p(y = 1|X)$) by applying a sigmoid transformation to the linear combination of predictors($\frac{1}{(1+e^{-(X\beta)})}$). Regression weights were chosen such that the likelihood of the observed data given beta ($p(y|\beta)$) was maximized. 
 
 ## What can be improved on?
-Our maximum likelihood implementation (frequentist approach) is nice, but it has some significant shortcommings as is. First, traditional maximum likelihood logistic regression does not take into account prior information. Ignoring prior information makes it difficult to refit the model as new batches of data come in. Consider the motivating example from the previous post. Our goal was to build a classification system to predict the probability of an employee accepting a job offer. As hiring cycles begin and end, users may want to update their model with each new batch of data that comes in! Our function as is, cannot accommidate updates and must be refit using all available data. This can lead to extensive (and unnessary) database management costs that store all historic data. While this may not be a big deal for small organizations, when working with large organizations this could become a sizeable cost!
+  Our maximum likelihood implementation is nice, but it has some significant shortcommings "as is". First, traditional maximum likelihood logistic regression does not take into account prior information. Ignoring prior information makes it difficult to refit the model as new batches of data come in. Consider the motivating example from the previous post. Our goal was to build a classification system to predict the probability of an employee accepting a job offer. As hiring cycles begin and end, users may want to update their model with each new batch of data that comes in! Our function as is, cannot accommidate updates and must be refit using all available data. Storing this amount of data can lead to extensive (and unnessary) database management costs. While this may not be a big deal for small organizations, when working with large organizations this could become a sizeable cost! It would be nice if we could simply store some aspects of the model and then update our model as new information comes in.
 
-Hypothesis tests allow researchers to talk about the probability of beta given the null, but do not allow for the discussion of beta given the data. 
-
-Not only does traditional maximum likelihood estimate fail to account for prior information, it approaches uncertainty in the parameter estimates in a rather unrefined way. Maximum likelihood is rooted in frequentist notions of probability. In short frequentists approach estimation and prediction by assuming that the model captures reality and that the parameter estimate is our best guess at the population parameter. While we could generate confidence intervals, these intervals rely on the notion that if we were to take infinite samples of the population and calculate the 95% confidence interval for each sample, the true predicted values would fall in the confidence intervals 95% of the time. This is primarily an issue when communicating predictions and results to stakeholders, as people often take point estimates for predictions or parameter estiamtes as the state of reality!
-
+  Not only do traditional maximum likelihood estimates fail to account for prior information, it approaches uncertainty in parameter estimates in a rather unrefined way. Maximum likelihood is rooted in frequentist notions of probability. In short frequentists approach probability as the expected value of a series of infinite repeated trials. In other words, frequentists make the assumption that there is some true parameter $\theta$, that generates the observed data. They use the expected values of the theta (often estimated through maximum likihood) to make their best guess about the "true parameter". In some cases this is an extremely useful approach to probability! In others, such as one off or rare events where repeated trials are not possible, this interpretation doesn't map to reality.
+  
+  This approach to probability makes explaining some aspects of frequentist statistics sometimes difficult. For example, frequentists quantify their uncertainty about parameter estimates using confidence intervals which have a rather unnatural interpretaton. These intervals can only be interpreted in terms of repeated trials. Imagine I were to quantify uncertainty in an estimate of the expected number of heads in a set of 10 coin tosses (CI95% = [3, 7]). This interval cannot be interpreted as the range of values that we are 95% certain the true average number of heads falls in. This range can only be interpreted in the context of repeated expiriments and calculations of confidence intervals. In other words, a 95% CI is the range of values that, if the experiment were repeated and CIs were calculated a large number of times (say 1000), would contain the true mean 95% of the time.
 
 ## What does a bayesian perspective contribute?
 
-The bayesian perspective addresses both of these short commings by defining and estimating a full probability model.
+  The bayesian perspective addresses both of these short commings by defining and estimating a full probability model. Some may recognize the below formula as Bayes rule.
 
 $$p(A|B) = \frac{p(B|A)p(A)}{p(B)}$$
 
-Let's put things in terms of our logistic regression model. We have a set of parameters, $\beta$, our data, $D$, and a set of prior beliefs about beta $\beta_{prior}$. We are interested in describing the density of $p(\beta|D)$, which is ofter refferred to as the **posterior distribution**. However, the maximum likelihood approach we solved for above focuses exclusively on $p(D|\beta)$. We can implement bayes rule in this scenario by modeling 
+  Let's put things in terms of our logistic regression model. We have a set of parameters, $\beta$, our data, $D$, and a set of prior beliefs about beta $\beta_{prior}$. We are interested in describing the density of $p(\beta|D)$, which is often referred to as the **posterior distribution**. However, the maximum likelihood approach we implemented previously focuses exclusively on $p(D|\beta)$. We can implement bayes rule in this scenario by modeling: 
 
 $$p(\beta|D) = \frac{p(D|\beta)p(\beta|\beta_{prior})}{p(D)}$$
 
-Lucky for us there are some familiar terms! We know that the likelihood formula above is equivalent to the $p(D|\beta)$. The term $p(\beta|\beta_{prior})$ is simply a probability density or the prior evaluated at $\beta$. For example, if we use a normal prior on the regression coefficients, $p(\beta|\beta_{prior})$ could be solved for using `dmvnorm(beta, mu_beta_prior, Sigma_beta_prior)`. Plugging in the likelihood for $P(D|\beta)$ and using our new understanding of $P(\beta|\beta_{prior})$ we are left with $p(D)$. 
+  Lucky for us there are some familiar terms! We know that the likelihood formula above is equivalent to the $p(D|\beta)$. The term $p(\beta|\beta_{prior})$ is simply a probability density or the prior evaluated at $\beta$. For example, if we use a normal prior on the regression coefficients, $p(\beta|\beta_{prior})$ could be solved for using `dmvnorm(beta, mu_beta_prior, Sigma_beta_prior)`. Plugging in the likelihood for $P(D|\beta)$ and using our new understanding of $P(\beta|\beta_{prior})$ we are left with $p(D)$. 
 
 $$p(\beta|D) = \frac{L(\beta)p(\beta|\beta_{prior})}{p(D)}$$
 
-$p(D)$ is a scaling constant that ensures the product of the probability probability density integrates to 1. Unforuntately in our case there is no analytic solution for P(D). This is because when we apply the sigmoid transformation to the linear model, we remove the possibility of finding conjugate priors (see [here](https://en.wikipedia.org/wiki/Conjugate_prior)). Instead of using formulaic methods we must rely on true bayesian methods that simulate the posterior distribution (Hamiltonian Markov Chain Monte Carlos) or approximate the posterior. 
+  $p(D)$ is a scaling constant that ensures the product of the likelihood an prior terms integrate to 1. Unforuntately in our case there is no analytic solution for $P(D)$. This is because when we apply the sigmoid transformation to the linear model, we remove the possibility of finding conjugate priors (see [here](https://en.wikipedia.org/wiki/Conjugate_prior)). Instead of using formulaic methods we must rely on true bayesian methods that simulate the posterior distribution (Hamiltonian Markov Chain Monte Carlo) or approximate the posterior. 
+  
+  So what does this new approach buy us? Well, for starters, we can account for prior information. Furthermore, the posteriors of the model can often be summarised by distributional parameters making the storage requirements for the model very small. Iteratively updating priors and posteriors as new information comes in allows our algorithms to learn and update over time. Finally, by conditioning $\beta$ on prior information, we can actually talk about probability in terms that are much easier to explain to stakeholders. For example, the 5th and 95th percentiles of the posterior can directly be interpreted as the range of values for which we are 95% certain the "true" parameter lies (assuming you are willing to accept there is a "true" parameter).
 
-##
+## Markov Chain Monte Carlo
+
+   Given that there is no closed form solution for the posterior of logistic regression, how can we capitalize on the benefits of Bayesian regression? Markov Chain Monte Carlos are a class of methods used to simulate the posterior distribution of a set of parameters $\theta$. The intution behind them is relatively simple. In cases where there is not an easy way to calculate a normalizing constant, we can iteratively simulate draws from the distribution of $\theta$. 
+   
+   To simulate these draws, we first pick a starting value for our algorithm. Next, we propose a new value of theta by adding a random number to the start point. If that value is more likely than the starting point, given the data we observed and our priors, we accept this new theta and store it as a possible value. If the new theta's likelihood is less than the starting point we (*probably*) reject this as being a possible value of theta. We then add another random number to the most recent accepted theta and repeat the process. After thousands of iterations we can look at the distribution of theta and get a good idea at the distribution of possible values for our parameters of interest. I include quasi-code down below to better illustrate the algrothim I just described. This is, infact, the Metropolis algorithim and gives a good intuition about the purpose of more advanced Markov Chain Monte Carlo methods. 
+
+```{null}
+Metropolis Algorithm
+Define y, X, prior_theta, theta_start, maxit;
+
+Initialize theta = theta_start;
+Initialize p_theta = p(y | theta_start) * p(theta_start | prior_theta);
+Initialize counter = 1;
+Initialize post_dist = vector(mode = "numeric");
+
+for t in 1 to maxit;
+  
+  proposal = theta + rnorm(1);
+  
+  p_proposal = p(y | proposal) * p(proposal | prior_theta)
+
+  ratio = p_propoal / p_theta;
+  
+  if ratio >= 1;
+    accept_proposal = TRUE;
+  else;
+    accept_proposal = as.logical(rbinom(n = 1, size = 1, prob = ratio));
+  end; 
+  
+  if accept_proposal = TRUE;
+    theta =  proposal;
+    p_theta = p_proposal;
+    post_dist[counter] = theta;
+    counter += 1
+  end;
+end;
+
+return post_dist;
+```
+
+While I do love creating algorithms from scratch, creating an efficient Markov Chain Monte Carlo function that works in a variety of cases ends up being a TON of work. The issues stems from the jump distribution (the distribution from which proposal thetas are selected). Sadly, for this chapter, I am going to rely on the `brms` package to get the job done. I say "sadly", but `brms` is a fantastic package that I would recommend to anyone! For those of you who like devloping from scratch algorithms, I will show a speedy alternative to MCMC in the section that follows. 
+
+I am going to be working with a similar data frame as the last post, although I am cutting down the size in order to decrease the models' run times. MCMC is pretty slow furthermore I want to illustrate how bayesian learning can be implemented. To further faciliate this process and clean up the code I define a few helper functions below. These aren't generalizable but do clean up the code. 
+
+```{r, eval = FALSE}
+# Simulation Parameters
+fe<-c("Intercept" = 0, "salary" = .3, "job_alt" = 1, "flexibility" = .3, "difficulty"  = -2, "market_sal" = -.15)
+```
+
+```{r, echo = FALSE, message = FALSE, warning=FALSE}
+set.seed(1234)
+library(tidyverse)
+library(decisionr)
+
+fe<-c("Intercept" = 0, "cost" = .3, "job_alt" = 1, "flexibility" = .3, "difficulty"  = -2, "market_sal" = -.15)
+
+fe_data<-t(fe)%>%
+  as.data.frame()%>%
+  rename(salary = cost)%>%
+  gather(key = var, value = value)
+
+#Initializing Vector of Zeros
+Intercept<-flexibility<-difficulty<-job_alt<-salary<-market_sal<-vector(mode = "numeric", 100)
+
+# Populating every other vector with job characteristics
+# Each vector contains information on 50 jobs, but since individuals are choosing between accepting a job and not accepting a job, there is an additional 50 rows for individuals not accepting a job
+# Jobs vary on four dimensions job_alt, difficulty, flexibility and salary
+salary[seq(from = 2, to = 100, by = 2)]<-rnorm(50, 30, 5)
+job_alt[seq(from = 2, to = 100, by = 2)]<-sample(1:4, 50, replace = TRUE, prob = c(.5, .3, .1, .1))
+difficulty[seq(from = 2, to = 100, by = 2)]<-sample(1:4, 50, replace = TRUE, prob = c(.3, .5, .1, .1))
+flexibility[seq(from = 2, to = 100, by = 2)]<-sample(1:4, 50, replace = TRUE, prob = c(.7, .1, .07, .13 ))
+Intercept[seq(from = 2, to = 100, by = 2)]<-1
+market_sal[seq(from = 2, to = 100, by = 2)]<-salary[seq(from = 2, to = 100, by = 2)]+rnorm(n = 50, mean = 0, sd = 5)
 
 
+# Thus the job feature matrix has one row associated with the job and one row associated with not the job
+design_df<-data.frame(BLOCK = rep(1:50, each = 2), 
+                              QES = rep(1:50, each = 2),
+                              alt = rep(0:1, times = 50),
+                              Intercept = Intercept,
+                              cost = salary,
+                              job_alt = job_alt,
+                              difficulty = difficulty,
+                              flexibility = flexibility,
+                              market_sal = market_sal)%>%
+  mutate_at(vars(cost, job_alt, difficulty, flexibility, market_sal), ~(.-mean(.))/sd(.))
+
+data_list<-map(1:10, function(x){
+  # Simulate People
+people<-suppressMessages(
+  sim_people(fixed_effects = fe, 
+             n_people = 50, 
+             n_blocks = 50, 
+             p_blocks = rep(.02, 50)
+             )
+  )
+
+# Simulate Decisions
+dec<-suppressMessages(
+  sim_dec(design = design_df, 
+          people = people)
+  )%>%
+  rename(salary = cost)%>%
+  ungroup()%>%
+  filter(alt == 1)
+
+dec
+}
+)
+dec<-data_list[[1]]
+```
+
+```{r}
+# Helper functions for summarising the posterior distribution
+post_summary<-function(model){
+  model%>%
+  spread_draws(b_Intercept, b_salary, b_job_alt, b_difficulty, b_flexibility, b_market_sal)%>%
+  select(b_Intercept:b_market_sal)%>%
+  rename_all(.funs = ~str_remove(., "^b_"))%>%
+  gather(key = var, value = value)%>%
+  group_by(var)%>%
+  summarise(mean = mean(value),
+            sd = sd(value),
+            p_95 = quantile(value, .95),
+            p_05 = quantile(value, .05))
+}
+
+# Defining Helper function to iteratively update priors using posterior summary tables
+prep_priors<-function(post_summary){
+  
+  # Creating necessary dataframe for brms prior construction
+  prior_df<-post_summary%>%
+  transmute(prior = paste0("normal(", mean, ",", sd, ")"),
+         class = if_else(str_detect(var, "Intercept"), "Intercept", "b"),
+         coef = if_else(str_detect(var, "Intercept"), "", str_remove(var, "^b_")))
+  
+  # applying beta_df
+  beta_df<-prior_df%>%
+    filter(class != "Intercept")
+
+  intercept_df<-prior_df%>%
+    filter(class == "Intercept")
+
+  new_priors<-empty_prior()
+
+  for(i in 1:nrow(beta_df)){
+    new_priors[i,]<- prior_string(beta_df$prior[i], class = beta_df$class[i], coef = beta_df$coef[i])
+  }
+
+  new_priors[nrow(prior_df),]<- prior_string(intercept_df$prior[1], class = intercept_df$class[1])
+  
+  new_priors
+}
+
+# Linear combination of predictors
+v<-function(X, beta){
+  v<-X%*%beta
+  v
+}
+
+# Estimated Probability through sigmoid transformation
+p_hat<-function(v){
+
+  p<-1/(1+exp(-v))
+  
+  p
+}
+
+```
 
 
-
+Let's begin the model building process by defining our priors. In our problem set up, we are implementing a new system so for now we will apply a diffuse prior on each coefficient. For the sake of simplicity (and capitalizing because of the central limit theorem), I am assuming that the intercept and regression weights are normally distributed. Kind of a cool sidenote, this prior specification is actually identical to ridge regression and acts as a regulization method.
 
 ```{r}
 library(brms)
+library(tidybayes)
+library(gganimate)
+
+# Setting Priors
 m1priors <- c(
   prior(normal(0,3), class = "Intercept"),
   prior(normal(0,3), class = "b", coef = "flexibility"),
@@ -588,8 +759,12 @@ m1priors <- c(
   prior(normal(0,3), class = "b", coef = "difficulty"),
   prior(normal(0,3), class = "b", coef = "market_sal")
 )
+```
 
+The model results are interesting and depict quite a bit of uncertainty in our estimates. In fact we are not sure if many of the independent variables are positively or negatively related to job acceptance. 
 
+```{r}
+# Running model
 m1 <- brms::brm(
   decision ~ salary+job_alt+difficulty+flexibility+market_sal,
   data = dec,
@@ -598,210 +773,218 @@ m1 <- brms::brm(
   seed = 123 # Adding a seed makes results reproducible.
 )
 
-
+# Printing output
 summary(m1)
 
-vcov(m1)
+post<-post_summary(m1)
+
+post%>%
+  ggplot(aes(x = var, y = mean))+
+  geom_bar(stat = "identity")+
+  geom_errorbar(aes(ymin = p_05, 
+                    ymax = p_95),
+                width = .3)+
+  geom_point(data = fe_data, aes(x = var, y = value))+
+  labs(x = "", y = "Estimate", 
+       title = "Posterior Estimates of Logistic Regression Coefficients", 
+       subtitle = "Points represent simulation parameters.")+
+  theme(panel.grid = element_blank())
 ```
 
 
-```{r}
-library(tidybayes)
+  Below I implement an iterative update procedure over 10 data collection points to illustrate how bayesian learning can be beneficial. In short this simulates how bayesian models can be updated as new information comes in. After each iteration, I save the mean aposteriori estimate and use that as the prior for the next wave of data. I also calculate the regret or cost my model faces at each time point which is given by the difference between the predicted and observed outcome. This provides an indication of how well the model is learning. If the cost is decreasing as time increases, the model is learning!
 
-get_variables(m1)
+```{r, message = FALSE, warning=FALSE}
 
-post<-m1%>%spread_draws(b_Intercept, b_salary, b_job_alt, b_difficulty, b_flexibility, b_market_sal)
+# Initializing parameters -----------------------------------------------------------------------
+# Initalizing priors for first time point
+# This initializes the same priors as above for =but formats them so they can be updated in the loop
+post<-data.frame(var = paste0("b_", post$var),
+                 mean = rep(0, length(post$var)),
+                 sd = rep(3, length(post$var)))
 
-post<-post%>%
-  select(b_Intercept:b_market_sal)%>%
-  gather(key = var, value = value)%>%
-  group_by(var)%>%
-  summarise(mean = mean(value),
-            sd = sd(value))
-```
+# initialized relevant objects for manipulation and storage
+f<-decision ~ salary+job_alt+difficulty+flexibility+market_sal
+y_name<-"decision"
+regret<-c()
+post_list<-list()
 
-
-
-```{r}
-fe<-c("Intercept" = 0, "cost" = .3, "job_alt" = 1, "flexibility" = .3, "difficulty"  = -2, "market_sal" = -.15, sal_by_market_sal = -.003)
-
-iter<-10
-
-
-# Initialize List
-model_list<-list()
-
-model_list[[1]]<-post
-
-for (j in 2:iter){
+## Beginning for loop
+for (j in 1:10){
   
-# Simulate People --------------------------------------------------------------------------------
-# Simulate People
-people<-suppressMessages(sim_people(fixed_effects = fe, n_people = 200, n_blocks = 50, p_blocks = rep(.02, 50)))
-
-
-#########################################
-######## Simulating decisions ###########
-#########################################
-# The following code chunch has the simulated people (i.e., job applicants) choose between accepting and rejecting the simulated job offers
-# I then organize the data frame a bit more so that the meaning of variables is clear
-
-dec<-suppressMessages(sim_dec(design = design_df, people = people))
-
-dec<-dec%>%
-  ungroup()%>%
-  filter(alt == 1)%>%
-  select(job_id = BLOCK, applicant_id = id, salary = cost,  job_alt:market_sal, decision)
-
-
-
-
+# Solving for regret ---------------------------------------------------------------------------
+  X<-model.matrix(f, data_list[[j]])
+  y<-data_list[[j]][y_name]%>%
+    as.matrix()%>%
+    as.vector()
+  
+  beta<-as.matrix(post$mean)[c(3, 6, 4, 1, 2, 5),]
+  v_hat<-v(X, beta)
+  p<-p_hat(v_hat)
+  
+ regret[j]<- sum(abs(y-p))
+  
+  
 # Set Priors -----------------------------------------------------------------------------------
-m2prior_df <- post%>%
-  transmute(prior = paste0("normal(", mean, ",", sd, ")"),
-         class = if_else(str_detect(var, "Intercept"), "Intercept", "b"),
-         coef = if_else(str_detect(var, "Intercept"), "", str_remove(var, "b_")))
+new_priors<-prep_priors(post)
 
-beta_df<-m2prior_df%>%
-  filter(class != "Intercept")
-
-intercept_df<-m2prior_df%>%
-  filter(class == "Intercept")
-
-m2_priors<-empty_prior()
-
-for(i in 1:nrow(beta_df)){
-  m2_priors[i,]<- prior_string(beta_df$prior[i], class = beta_df$class[i], coef = beta_df$coef[i])
-}
-
-m2_priors[nrow(m2prior_df),]<- prior_string(intercept_df$prior[1], class = intercept_df$class[1])
-
-
-m2 <- brms::brm(
-  decision ~ salary+job_alt+difficulty+flexibility+market_sal,
-  data = dec,
-  prior = m2_priors,
+# Run model
+new_model <- brms::brm(
+  f,
+  data = data_list[[j]],
+  prior = new_priors,
   family = "bernoulli",
   seed = 123 # Adding a seed makes results reproducible.
 )
 
+  post<-post_summary(new_model)
 
-
-
-post<-m2%>%spread_draws(b_Intercept, b_salary, b_job_alt, b_difficulty, b_flexibility, b_market_sal)
-
-post<-post%>%
-  select(b_Intercept:b_market_sal)%>%
-  gather(key = var, value = value)%>%
-  group_by(var)%>%
-  summarise(mean = mean(value),
-            sd = sd(value))%>%
-  mutate(iteration = j)
-
-model_list[[j]]<-post
+  post_list[[j]]<-post
 }
 ```
 
-```{r}
-model_df<-model_list%>%bind_rows()%>%
-  mutate(iteration = if_else(is.na(iteration), 1, as.double(iteration)))
+```{r, message = FALSE}
+post_df<-map_dfr(1:length(post_list), function(x){
+    post_list[[x]]%>%mutate(iteration = x)
+    })
 
-ggplot(model_df, aes(x = iteration, y = mean, color = var))+
-  geom_line()
+post_df%>%
+  ggplot(aes(x = var, y = mean))+
+  geom_bar(stat = "identity")+
+  geom_errorbar(aes(ymin = p_05, 
+                    ymax = p_95),
+                width = .3)+
+  geom_point(data = fe_data, aes(x = var, y = value))+
+  labs(x = "", y = "Estimate", 
+       title = "Posterior Estimates of Logistic Regression Coefficients at Time {closest_state} of 10", 
+       subtitle = "Points represent simulation parameters.")+
+  theme(panel.grid = element_blank())+
+  transition_states(iteration,
+                    transition_length = 2,
+                    state_length = 1)
 
-ggplot(model_df, aes(x = iteration, y = sd, color = var))+
-  geom_line()
+ggplot(data = NULL, aes(x = 1:length(regret), y = regret))+
+  geom_line()+
+  labs(x = "", y = "Cost", 
+       title = "Cost Incurred at Time t")+
+  theme(panel.grid = element_blank())+
+ scale_x_continuous(breaks = 1:10)
 
 
 ```
 
 
 ### LaPlace Approximation
+
+While MCMC is super flexible, it isn't the most scalable solution. This is because it is rather slow - especially implemented through `brms` which requires the compilation of a c++ model. The primary problem with bayesian logistic regression is that the we can't solve analytically for $p(D)$. A work around is to solve for the mean aposterior given normal priors and than approximate the distribution with a taylor expansion (covered here in the context of optimization) about the estimate. 
+
+How do we solve for the mean aposeriori estimate? This is done my maximizing the joint likelihood: 
+
+$$p(D|\beta)p(\beta|\beta_{prior})$$
+
+$P(D|\beta)$ is simply the typical likelihood for binomial random variables. 
+
+$$L(\beta) = -\sum_{i=1}^n\ y_i\ ln(\ \hat p_i(y = 1)\ )+(1-y_i)\ ln(\ 1-\hat p_i(y = 1)\ )$$
+$p(\beta|\beta_{prior})$ can be solved simply using the multivariate normal desnity. This means that in order to solve for the mean a posteriori we need to
+
+$$\min_\theta -(\sum_{i=1}^n\ y_i\ ln(\ \hat p_i(y = 1)\ )+(1-y_i)\ ln(\ 1-\hat p_i(y = 1)\ ))+log((\theta-\mu)\Sigma^{-1}(\theta-\mu)))$$
 ```{r}
-
-# Initializing Parameters ------------------------------------------------------------------
-
-
-# Define Priors and starting values
-w_0<-m_0<-rep(0, ncol(X))
-
-# Define precision
-S_0<-diag(rep(5, times = ncol(X)))
-
-
 # Defining Objective Function ----------------------------------------------------------------
-post_ll<-function(theta){
+post_ll<-function(theta, X, y, prior_beta, prior_vcov){
  
   v_hat<-v(X = X, beta = theta) 
   p<-p_hat(v_hat)
   
-ll_x<-sum(y*p+(1-y)*(1-p))
-ll_p<--1/2*t(theta-m_0)%*%solve(S_0)%*%(theta-m_0)
+  ll_x<--sum(y*log(p)+(1-y)*log(1-p))
+  ll_p<--log(mixtools::dmvnorm(y = theta-prior_beta, mu = rep(0, length(theta)), sigma = prior_vcov))
  
-ll_post<- ll_x+ll_p
+  ll_post<- ll_x+ll_p
 
--ll_post
+  ll_post
 }
 
-# Solving for theta --------------------------------------------------------------------------
-optim<-optim(w_0, post_ll)
- 
- rs<-optim(par = w_0, post_ll)
-
- theta<-rs$par
-
-# Solving for Hessian -------------------------------------------------------------------------
-posterior_hessian<- function(theta, X, y, sigma_0){
-
-  v_hat<-v(X, theta)
-  p<-p_hat(v = v_hat)
-
-  p_var<-p*(1-p)
-  
-  mat_var<-list()
-
-  for(i in 1:length(p_var)){
-   mat_var[[i]]<- p_var[[i]]*X[i,]%*%t(X[i,])
-  }
-
-  ll_deriv<-Reduce("+", mat_var)
-
-  d2<-solve(sigma_0)
-
-  post_hesh <- ll_deriv+d2
-
-  solve(post_hesh)
-}
-  
-p_h<-posterior_hessian(theta = theta, X = X, y = y, sigma_0 = S_0)
-
-S_0<-p_h
-
-m_0<-theta
- 
 ```
 
+  The taylor expansion has some cool properties. First, by minimizing the joint likelihood with respect to theta, we set the first derivative equal to 0. This means that the first order term drops out leaving the taylor expansion with only the inverse hessian. Since derivatives are additive we can chunk the objective function to solve for the hessian. The first part of the equation is composed of the typical likelihood function for a binomial random variable. We solved for the hessian in the first post. The second part is the multivariate normal density which has a well known hessian ($\Sigma^{-1}$). We can simply add the covariance matrix of the priors to the hessian of the likelihood to solve for the taylor expansion. 
+
 ```{r}
-# Simulation Settings
-fe<-c("Intercept" = 0, "cost" = .3, "job_alt" = 1, "flexibility" = .3, "difficulty"  = -2, "market_sal" = -.15, sal_by_market_sal = -.003)
+# Implementation of taylor expansions
+logistic_laplace<-function(formula=NULL, data=NULL, prior_beta=NULL, prior_vcov=NULL, X, y){
+  
+  # Prepping requisite objects -----------------------------------------------------------
+  if(!is.null(formula) & !is.null(data)){
+    X<-model.matrix(formula, data)
+    y<-as.vector(as.matrix(data[as.character(formula)[2]]))
+  }
+  
+  p<-ncol(X)
+  
+  # Handling priors if non are provided ---------------------------------------------------
+  if(is.null(prior_beta)){
+    prior_beta<-rep(0, p)
+  }
+  
+  if(is.null(prior_vcov)){
+    prior_vcov<-diag(5, nrow = p, ncol= p)
+  }
+  
+  # Solving for theta --------------------------------------------------------------------------
+    # using optim is cheating, I know
+    # Solution for the hessian is outlined above and the derivatives are pretty easy
+    # I think the motivated person would be able to implement newtonian optimization without me spelling it out
+   rs<-optim(par = prior_beta, post_ll, hessian = TRUE, prior_beta = prior_beta, prior_vcov = prior_vcov, X = X, y = y)
+  
+   post_beta<-rs$par
+   
+   post_cov<-solve(rs$hessian)
+   
+   list(MAP = post_beta, 
+        vcov = post_cov)
+}
 
-iter<-100
+# Helper function for posterior extraction from lists
+
+laplace_posterior<-function(model_list, coef_names){
+  vcov_list<-map(model_list, "vcov")
+  coef_list<-map(model_list, "MAP")
+  
+  
+  vcov<-map_dfr(vcov_list, function(x){
+                                   variance<- diag(x)
+                                   names(variance)<-coef_names
+                                   variance<-t(variance)
+                                   as.data.frame(variance)}
+          )%>%
+  mutate(Time = 1:n())%>%
+  gather(key = "Coefficient",
+             value = "VAR", 
+             - Time)
 
 
-# Initialize List
-coef_list<-list()
+map<-map_dfr(coef_list, function(x){names(x)<-coef_names
+                                   x<-t(x)
+                                   as.data.frame(x)}
+        )%>%
+      mutate(Time = 1:n())%>%
+      gather(key = "Coefficient",
+             value = "MAP", 
+             - Time)
 
-vcov_list<-list()
+posterior_dist<-left_join(map, vcov)
 
-coef_list[[1]]<-theta
-vcov_list[[1]]<-p_h
+posterior_dist
+}
 
-for(i in 2:iter){
+```
 
-# Simulate People ------------------------------------------------------------------  
+  When do Laplace approximations work? The taylor expansion implies that the posterior distribution will me normal. They work well in scearios for which a normal posterior would be appropriate. Given that a normal posterior is typically appriate for GLM models when the sample size is sufficiently large, this is often a good candidate for the priors. Below, I am going to replicate the analysis done above, but then explore some slight variations that weren't possible with `brms` because of run-time restrictions. In the first variation, I am going to update the models with smaller batches (but the same overall sample size n = 500). Second, I am going to explore how the model performs when the simulation parameters are not stationary. 
+
+```{r, echo = FALSE}
+iterative_gen_decisions<-function(fixed_effects, n_people){
+  # Simulate People ------------------------------------------------------------------  
 # Participants have their own preferences associated with each of these positons, for now we will simulate them as being fixed (i.e., an single preference parameter adequetly summarises all people)
 # We simulate these preference distributions below. 
-people<-suppressMessages(sim_people(fixed_effects = fe, n_people = 200, n_blocks = 50, p_blocks = rep(.02, 50)))
+people<-suppressMessages(sim_people(fixed_effects = fixed_effects, n_people = n_people, n_blocks = 50, p_blocks = rep(.02, 50)))
 
 
 #########################################
@@ -816,41 +999,244 @@ dec<-dec%>%
   ungroup()%>%
   filter(alt == 1)%>%
   select(job_id = BLOCK, applicant_id = id, salary = cost,  job_alt:market_sal, decision)
-  
-X<-dec[3:7]
-y<-dec["decision"]
 
-X<-cbind(1, X)
-X<-as.matrix(X)
-y<-as.matrix(y)
-  
-# Refit ------------------------------------------------------------------------------- 
-rs<-optim(par = w_0, post_ll)
-
-theta<-rs$par
-
-p_h<-posterior_hessian(theta, X, y, S_0)
-
-
-# Update Priors -----------------------------------------------------------------------
-S_0<-p_h
-m_0<-theta
-
-# Save Models -------------------------------------------------------------------------
-coef_list[[i]]<-theta
-
-vcov_list[[i]]<-p_h
+dec
 }
 ```
 
+#### Simulation 1: 50 Observation Batches with Deterministic Data Generation
+
 ```{r}
-coef_list%>%
-  map_dbl(., 6)%>%
-  plot(., type = "l")
 
 
-vcov_list[[99]]
+
+# Define initial priors
+prior_beta<-rep(0, 6)
+prior_vcov<-diag(3, 6)
+
+# Initialize storage and useful objects
+model_list<-list()
+loss<-vector("numeric")
+
+f<-decision~salary+job_alt+flexibility+difficulty+market_sal
+y_name<-"decision"
+
+for(i in 1:10){
+
+  # Solving for the cost -----------------------------
+    X<-model.matrix(f, data_list[[i]])
+    y<-as.vector(as.matrix(data_list[[i]][y_name]))
+    v_hat<-v(X, prior_beta)
+    p<-p_hat(v_hat)
+    loss[[i]]<-sum(abs(y-p))
+  
+  # Running model -------------------------------------
+  m<-logistic_laplace(f, 
+                      data = data_list[[i]], 
+                      prior_beta = prior_beta, 
+                      prior_vcov = prior_vcov)
+  
+  # Updating Priors -----------------------------------
+  prior_beta<-m$MAP
+  prior_vcov<-m$vcov
+  
+  # Storing model output ------------------------------
+  model_list[[i]]<-m
+}
+
+# Defining coefficient names
+coef_names<-c("Intercept", "Salary", "job_alt", "flexibility", "difficulty", "market_sal")
+
+post_summary<-laplace_posterior(model_list = model_list, coef_names = coef_names)
+
+post_summary%>%
+  ggplot(aes(x = Coefficient, y = MAP))+
+  geom_bar(stat = "identity")+
+  geom_errorbar(aes(ymin = MAP-2*sqrt(VAR), 
+                    ymax = MAP+2*sqrt(VAR)),
+                width = .3)+
+  geom_point(data = fe_data, aes(x = var, y = value))+
+  labs(x = "", y = "Estimate", 
+       title = "Posterior Estimates of Logistic Regression Coefficients at Time {closest_state} of 10", 
+       subtitle = "Points represent simulation parameters.")+
+  theme(panel.grid = element_blank())+
+  transition_states(Time,
+                    transition_length = 2,
+                    state_length = 1)
+
+
+ggplot(data = NULL, aes(x = 1:length(loss), y = loss))+
+  geom_line()+
+  labs(x = "", y = "Cost", 
+       title = "Cost Incurred at Time t")+
+  theme(panel.grid = element_blank())+
+ scale_x_continuous(breaks = 1:10)
+
+ 
 ```
+
+#### Simulation 2: 5 Observation Batches with Deterministic Data Generation
+
+```{r, echo = FALSE}
+data_list<-map(1:100, function(x){
+  iterative_gen_decisions(fixed_effects = fe, n_people = 5)
+})
+```
+
+
+```{r}
+# Define initial priors
+prior_beta<-rep(0, 6)
+prior_vcov<-diag(3, 6)
+
+# Initialize storage and useful objects
+model_list<-list()
+loss<-vector("numeric")
+
+f<-decision~salary+job_alt+flexibility+difficulty+market_sal
+y_name<-"decision"
+
+for(i in 1:100){
+
+  # Solving for the cost -----------------------------
+    X<-model.matrix(f, data_list[[i]])
+    y<-as.vector(as.matrix(data_list[[i]][y_name]))
+    v_hat<-v(X, prior_beta)
+    p<-p_hat(v_hat)
+    loss[[i]]<-sum(abs(y-p))
+  
+  # Running model -------------------------------------
+  m<-logistic_laplace(f, 
+                      data = data_list[[i]], 
+                      prior_beta = prior_beta, 
+                      prior_vcov = prior_vcov)
+  
+  # Updating Priors -----------------------------------
+  prior_beta<-m$MAP
+  prior_vcov<-m$vcov
+  
+  # Storing model output ------------------------------
+  model_list[[i]]<-m
+}
+
+# Defining coefficient names
+coef_names<-c("Intercept", "salary", "job_alt", "flexibility", "difficulty", "market_sal")
+
+
+post_summary<-laplace_posterior(model_list = model_list, coef_names)
+
+post_summary%>%
+  ggplot(aes(x = Coefficient, y = MAP))+
+  geom_bar(stat = "identity")+
+  geom_errorbar(aes(ymin = MAP-2*sqrt(VAR), 
+                    ymax = MAP+2*sqrt(VAR)),
+                width = .3)+
+  geom_point(data = fe_data, aes(x = var, y = value))+
+  labs(x = "", y = "Estimate", 
+       title = "Posterior Estimates of Logistic Regression Coefficients at Time {closest_state} of 100", 
+       subtitle = "Points represent simulation parameters.")+
+  theme(panel.grid = element_blank())+
+  transition_states(Time,
+                    transition_length = 2,
+                    state_length = 1)
+
+
+ggplot(data = NULL, aes(x = 1:length(loss), y = loss))+
+  geom_line()+
+  labs(x = "", y = "Cost", 
+       title = "Cost Incurred at Time t")+
+  theme(panel.grid = element_blank())+
+ scale_x_continuous(breaks = 1:100)
+```
+```{r, echo = FALSE}
+
+fe_data1<-fe_data%>%
+  expand_grid(Time = 1:33)
+fe_data2<-fe_data%>%
+  mutate(value = value + rnorm(6, -1, .3))%>%
+  expand_grid(Time = 34:66)
+fe_data3<-fe_data%>%
+  mutate(value = value + rnorm(6, 2, .3))%>%
+  expand_grid(Time = 67:100)
+
+non_stat<-bind_rows(fe_data1, fe_data2, fe_data3)
+
+data_list<-map(1:100, function(x){
+ tmp<- non_stat%>%
+    filter(Time == x)%>%
+    pull("value")
+ 
+ names(tmp)<-names(fe)
+  iterative_gen_decisions(fixed_effects = tmp, n_people = 5)
+})
+```
+
+
+```{r}
+# Define initial priors
+prior_beta<-rep(0, 6)
+prior_vcov<-diag(3, 6)
+
+# Initialize storage and useful objects
+model_list<-list()
+loss<-vector("numeric")
+
+f<-decision~salary+job_alt+flexibility+difficulty+market_sal
+y_name<-"decision"
+
+for(i in 1:100){
+
+  # Solving for the cost -----------------------------
+    X<-model.matrix(f, data_list[[i]])
+    y<-as.vector(as.matrix(data_list[[i]][y_name]))
+    v_hat<-v(X, prior_beta)
+    p<-p_hat(v_hat)
+    loss[[i]]<-sum(abs(y-p))
+  
+  # Running model -------------------------------------
+  m<-logistic_laplace(f, 
+                      data = data_list[[i]], 
+                      prior_beta = prior_beta, 
+                      prior_vcov = prior_vcov)
+  
+  # Updating Priors -----------------------------------
+  prior_beta<-m$MAP
+  prior_vcov<-m$vcov
+  
+  # Storing model output ------------------------------
+  model_list[[i]]<-m
+}
+
+# Defining coefficient names
+coef_names<-c("Intercept", "salary", "job_alt", "flexibility", "difficulty", "market_sal")
+
+
+post_summary<-laplace_posterior(model_list = model_list, coef_names)
+
+post_summary%>%
+  ggplot(aes(x = Coefficient, y = MAP))+
+  geom_bar(stat = "identity")+
+  geom_errorbar(aes(ymin = MAP-2*sqrt(VAR), 
+                    ymax = MAP+2*sqrt(VAR)),
+                width = .3)+
+  geom_point(data = non_stat, aes(x = var, y = value))+
+  labs(x = "", y = "Estimate", 
+       title = "Posterior Estimates of Logistic Regression Coefficients at Time {closest_state} of 100", 
+       subtitle = "Points represent simulation parameters.")+
+  theme(panel.grid = element_blank())+
+  transition_states(Time,
+                    transition_length = 2,
+                    state_length = 1)
+
+
+ggplot(data = NULL, aes(x = 1:length(loss), y = loss))+
+  geom_line()+
+  labs(x = "", y = "Cost", 
+       title = "Cost Incurred at Time t")+
+  theme(panel.grid = element_blank())+
+ scale_x_continuous(breaks = 1:100)
+```
+
 
 ## Some great posts here
 [here](https://www.countbayesie.com/blog/2019/6/12/logistic-regression-from-bayes-theorem) and a more applied perspective [here](https://www.jamesrrae.com/post/bayesian-logistic-regression-using-brms-part-1/)
