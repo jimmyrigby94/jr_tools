@@ -24,7 +24,7 @@ boot_cv<-function(data, iter = 10, loo_boot = TRUE, fun = "lm", ...){
       suppressMessages(eval_set<-anti_join(data,temp))
       my_call$data<-temp
       mod<-eval(my_call)
-      error[i]<-sum((eval_set[,as.character(my_call$formula)[2]]-predict(mod, eval_set, allow.new.levels = re_mod))^2)/nrow(eval_set)
+      error[i]<-sum((eval_set[,as.character(my_call$formula)[2]]-predict(mod, eval_set, allow.new.levels = re_mod))^2, na.rm = TRUE)/nrow(eval_set)
     }
   }else{
     for(i in 1:iter){
@@ -32,7 +32,7 @@ boot_cv<-function(data, iter = 10, loo_boot = TRUE, fun = "lm", ...){
       temp<-sample_n(data, size = n, replace = TRUE)
       my_call$data<-temp
       mod<-eval(my_call)
-      error[i]<-sum((data[,as.character(my_call$formula)[2]]-predict(mod, data, allow.new.levels = re_mod))^2)/n
+      error[i]<-sum((data[,as.character(my_call$formula)[2]]-predict(mod, data, allow.new.levels = re_mod))^2, na.rm = TRUE)/n
     }
   }
   
