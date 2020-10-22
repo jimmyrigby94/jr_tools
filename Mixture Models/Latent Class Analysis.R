@@ -1,3 +1,5 @@
+library(tidyverse)
+
 gen_lc<-function(n, p1, p2, p3, p4, p5, p6, p7, p8){
   data.frame(x1 = rbinom(n, 1, p1), 
              x2 = rbinom(n, 1, p2),
@@ -185,6 +187,9 @@ my_mix<-function(x, k = 2, epsilon = 1e-08, maxit = 10000, verb = TRUE){
 
 
 model<-my_mix(x = mixture_df%>%select(-class), k = 3)
+
+# Returning means as logits to align with mplus
+map(model$mean, ~log(./(1-.)))
 
 post<-model$post%>%
   bind_cols(mixture_df)%>%

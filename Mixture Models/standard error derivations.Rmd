@@ -1,0 +1,575 @@
+---
+title: "Mixture Standard Errors"
+author: "James Rigby"
+date: "5/4/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Normal Distribution
+
+
+$$Likelihood = \phi(x;\mu,\sigma)= \prod_{i=1}^n\frac{1}{\sqrt{2\pi\sigma^2}}e^{-\frac{(x-\mu)^2}{2\sigma^2}}$$
+$$= (2\pi\sigma^2)^{\frac{-n}{2}}e^{-\frac{\sum_{i=1}^n(x-\mu)^2}{2\sigma^2}}$$
+$$LL = log(\phi(x;\mu,\sigma)) = \frac{-n}{2}log(2\pi\sigma^2)+\frac{-1}{2\sigma^2}\sum_{i=1}^n(x-\mu)^2$$
+## Derivative with Respect to the mean
+$$\frac{d}{d\mu_k}(\frac{-n}{2}log(2\pi\sigma^2)+\frac{-1}{2\sigma^2}\sum_{i=1}^n(x-\mu)^2)$$
+
+The constant can be dropped leaving 
+
+$$\frac{d}{d\mu_k}(\frac{-1}{2\sigma^2}\sum_{i=1}^n(x-\mu)^2)$$
+Formula can be rearranged by moving the scaling term outside
+
+$$\frac{-1}{2\sigma^2}\frac{d}{d\mu}(\sum_{i=1}^n(x-\mu)^2)$$
+Applying the chain rule where $f = x-\mu$
+
+$$\frac{-1}{2\sigma^2}\sum_{i=1}^n\frac{d}{df}(f)^2\frac{d}{d\mu}x-\mu$$
+$$\frac{-1}{2\sigma^2}\sum_{i=1}^n2(x-\mu)(-1)$$
+$$\frac{1}{\sigma^2}\sum_{i=1}^n(x-\mu)$$
+$$\frac{d}{d\mu}\phi(x;\mu,\sigma)=\frac{\sum_{i=1}^n(x-\mu)}{\sigma^2}$$
+$$\frac{d''}{d\mu}\phi(x;\mu,\sigma)=\frac{\sum_{i=1}^n(-1)}{\sigma^2}=\frac{-n}{\sigma^2}$$
+
+The second derivative should look familiar as it is negative inverse of the variance of the mean (i.e, the negative inverse of the squared standard error).
+
+## Solution for the mean
+We can derive the mean of the distribution ($\mu$) by setting the derivative with respect to $\mu$ to 0. 
+
+$$0=\frac{\sum_{i=1}^n(x-\mu)}{\sigma^2}$$
+$$0=\sum_{i=1}^n(x-\mu)$$
+$$0=\sum_{i=1}^n(x)-n*\mu$$
+$$\frac{-\sum^n_{i=1}x}{-n}=\mu$$
+
+
+
+
+
+```{r}
+n<-100
+eps<-1e-5
+y<-rnorm(n)
+
+# Verify that the derivative wrt mu is 0
+sum((y-mean(y))/var(y))
+
+# Verify that adding +-eps leads to non-zero gradient
+sum((y-mean(y)+eps)/var(y))
+sum((y-mean(y)-eps)/var(y))
+
+
+# Cross product of score matrix (referred to as empirical observed information matrix by M&P)
+s<-(y-mean(y))/var(y)
+
+sd_o<-crossprod(s,s)
+
+1/sd_o
+sqrt(1/sd_o)
+
+# Observed information matrix by direct calculation
+d2<--n/var(y)
+sqrt(-1/d2)
+```
+
+# Mixture of Normals
+
+$$Likelihood = \prod_{i=1}^n\prod_{k = 1}^K(\lambda_k\ \phi(x;\mu_k,\sigma_k))^{\tau_{ik}}$$
+$$LL = \sum_{i=1}^n\sum_{k = 1}^K\tau_{ik}(log(\lambda_k)+\log(phi(x;\mu_k,\sigma_k)))$$
+
+## Derivative with respect to mean k
+$$\frac{d}{d\mu_k} \sum_{i=1}^n\sum_{k = 1}^K\tau_{ik}(log(\lambda_k)+\log(phi(x;\mu_k,\sigma_k)))$$
+Drop out the constants
+
+$$\frac{d}{d\mu_k} \sum_{i=1}^n\tau_{ik}(\log(phi(x;\mu_k,\sigma_k)))$$
+
+The above equation is just a rescaled version of the normal distribution. We can apply the chain rule to handle that defining f as $(\log(phi(x;\mu,\sigma))$
+
+
+$$ \sum_{i=1}^n\frac{d}{df}\tau_{ik}(f)\frac{d}{d\mu_k}\log(phi(x;\mu_k,\sigma_k))$$
+
+We solved for $\frac{d}{d\mu_k}\log(phi(x;\mu,\sigma_k))$ above and the derivative for $\frac{d}{df}\tau_{ik}(f)$ is just $\tau_{ik}$. Thus, 
+
+$$\frac{d'}{d\mu_k}=\frac{\sum_{i=1}^n\tau_{ik}(x-\mu_k)}{\sigma_k^2}$$
+## Second Derivative with Respect to the Mean
+This is pretty straight forward from the first derivative calculation. 
+
+$$\frac{d''}{d\mu_k}=\frac{\sum_{i=1}^n-\tau_{ik}}{\sigma_k^2}$$
+
+The second derivative looks nearly identical to the analytic solution for multivariate normals proposed by Basford, Greenway, McLachlan, and Peel (1997). They note that the analytic standard error for the mixture of gaussians may provide non-sensical solutions. I think this is because it does not recognize the uncertanity in class assignment ($tau_{ik}$) - it will always produce overly conservative standard errors when class separation is small. This is evidenced numerical experiments below. 
+
+## Derivative with respect to mixing proportion
+
+$$\frac{d}{d\lambda_k} \sum_{i=1}^n\sum_{k = 1}^K\tau_{ik}(log(\lambda_k)+\log(phi(x;\mu_k,\sigma_k)))$$
+
+Drop constant. 
+
+$$\frac{d}{d\lambda_k} \sum_{i=1}^n\tau_{ik}(log(\lambda_k))$$
+Pull out scaling term
+$$ \sum_{i=1}^n\tau_{ik}\frac{d}{d\lambda_k}(log(\lambda_k))$$
+
+$$\frac{d}{d\lambda_k}= \sum_{i=1}^n\frac{\tau_{ik}}{\lambda_k}=\sum_{i=1}^n\tau_{ik}\lambda_k^{-1}$$
+
+## Recognizing Model Constrains on Lambda
+Note that the above formulations do not recognize the sum to 1 constraint on the lambdas. In fact, when estimating mixing proportions $\lambda_k=1-\sum_{k=1}^{K-1}$. Thus the above formulations are incorrect. Illustrating the appropriate differentiation in the two group case may be useful. 
+
+$$\frac{d}{d\lambda_1} \sum_{i=1}^n\tau_{i1}(log(\lambda_1)+\log(phi(x;\mu_1,\sigma_1)))+\tau_{i2}(log(\lambda_2)+\log(phi(x;\mu_2,\sigma_2)))$$
+Implementing the sum to 1 constraint
+
+$$\frac{d}{d\lambda_1} \sum_{i=1}^n\tau_{i1}(log(\lambda_1)+\log(phi(x;\mu_1,\sigma_1)))+\tau_{i2}(log(1-\lambda_1)+\log(phi(x;\mu_2,\sigma_2)))$$
+
+Dropping constants
+$$\frac{d}{d\lambda_1} \sum_{i=1}^n\tau_{i1}(log(\lambda_1))+\tau_{i2}(log(1-\lambda_1))$$
+$$\sum_{i=1}^n\tau_{i1}\frac{d}{d\lambda_1} log(\lambda_1)+\tau_{i2}\frac{d}{d\lambda_1}(log(1-\lambda_1))$$
+
+$$\sum_{i=1}^n\frac{\tau_{i1}}{\lambda_1}+\tau_{i2}\frac{d}{d\lambda_1}(log(1-\lambda_1))$$
+
+$$\sum_{i=1}^n\frac{\tau_{i1}}{\lambda_1}-\frac{\tau_{i2}}{1-\lambda_1}$$
+$$\sum_{i=1}^n\frac{\tau_{i1}}{\lambda_1}-\frac{\tau_{i2}}{\lambda_2}$$
+
+In the more general case:
+
+$$\frac{d}{d\lambda_j} = \sum_{i=1}^n\frac{\tau_{ij}}{\lambda_j}-\frac{\tau_{ik}}{\lambda_k}$$
+where j = 1-k-1
+
+Note that there can only be k-1 derivatives for lambda because the final lambda is identified by the others. 
+
+
+
+
+
+
+
+## Solving for Mean K
+
+$$\frac{d'}{d\mu_k}=\frac{\sum_{i=1}^n\tau_{ik}(x-\mu_k)}{\sigma_k^2}$$
+
+$$0=\frac{\sum_{i=1}^n\tau_{ik}(x-\mu_k)}{\sigma_k^2}$$
+
+$$0=\sum_{i=1}^n\tau_{ik}(x-\mu_k)$$
+$$0=\sum_{i=1}^n(\tau_{ik}x-\tau_{ik}\mu_k)$$
+$$0=(\sum_{i=1}^n\tau_{ik}x-\sum_{i=1}^n\tau_{ik}\mu_k)$$
+$$0=(\sum_{i=1}^n\tau_{ik}x-\lambda_k\mu_k)$$
+$$-\sum_{i=1}^n\tau_{ik}x=-\lambda_k\mu_k$$
+$$\frac{-\sum_{i=1}^n\tau_{ik}x}{-\lambda_k}=\mu_k$$
+$$\frac{\sum_{i=1}^n\tau_{ik}x}{\lambda_k}=\mu_k$$
+
+```{r}
+set.seed(1234)
+library(tidyverse)
+n<-1000
+test<-data.frame(x= rnorm(2000))%>%
+  rowwise()%>%
+  mutate(z = sample(0:1, size = 1, replace = TRUE, prob = c(1/(1+exp(-(.1+.3*x))), 1-1/(1+exp(-.1+-.3*x)))))%>%
+  ungroup()%>%
+  mutate(y = if_else(z==1, rnorm(n*2, -1), rnorm(n*2, 1)))
+
+
+
+gauss_mix<-function(y, k, start = NULL, eps = 1e-10){
+  
+  # Prepping important variables
+  n<-length(y)
+  diff<-1
+  iter<-0
+  
+  # Initializing starting parameters
+  if(is.null(start)){
+     y<-y[order(y)]
+  
+  bins<-split(y, c(rep(1:k, each = length(y)%/%k), rep(k, length(y)%%k)))
+  
+  mu<-map_dbl(bins, mean)
+  sd<-map_dbl(bins, ~sd(.))
+  }else{
+    mu<-start[1:k]
+    sd<-start[(k+1):(2*k)]
+  }
+  
+ lambda<-rep(1/k, times = k)
+
+ 
+  # Creating a matrix to store the posterior class probabilities
+  ll_mat<-post<-matrix(nrow = length(y), ncol = k)
+  
+  #### Initial E Step ####
+  
+  # populating posterior matrix given the starting values initially with lambda*phi(y, mu, sigma)
+  for(i in 1:k){
+    ll_mat[,i]<- lambda[i]*dnorm(y, mu[i], sd[i])
+  }
+  
+
+  
+  # Transforming lambda*phi(y, mu, sigma) into posteriors by taking the relative liklihood of individual i belonging to class k
+  post<-ll_mat/rowSums(ll_mat)
+  
+    # Calculating the log likelihood likelihood
+  ll<-sum(rowSums(post*log(ll_mat)))
+
+  
+  while (abs(diff)>eps){
+    
+   ll_old<-ll
+   lambda<-colMeans(post)
+
+   for(i in 1:k){
+     
+     ### M Step ###
+     mu[i]<-sum(post[,i]*y)/sum(post[,i])
+     
+     sd[i]<-sqrt(sum(post[,i]*(y-mu[i])^2)/(sum(post[,i])-1))
+     
+    ### E Step ###
+    ll_mat[,i]<- lambda[i]*dnorm(y, mu[i], sd[i])
+   }
+   
+   post<-ll_mat/rowSums(ll_mat)
+   
+   ll<-sum(rowSums(post*log(ll_mat)))
+   diff<-ll-ll_old
+   iter<-iter+1
+  }
+  
+   se_e<-se_o<-vcov_e<-vcov_o<-list()
+
+  # Calculating the information matrices
+  for(i in 1:k){
+    # vcov_o is the observed information matrix calculated by taking the hessian of the likelihood
+    vcov_o[[i]]<-sum(post[,i])/sd[i]^2
+    
+    # se_o is the standard error calculated using the observed information matrix
+    se_o[[i]]<-c(sqrt(1/vcov_o[[i]]))
+    
+    # The expected information matrix is calculated for the lambdas and and means using the score matrix
+    # since the kth lambda is a linear combination of the others, its score is omitted
+    if(i!=k){
+          score<-cbind(post[,i]*(y-mu[i])/sd[i]^2, post[,i]/lambda[[i]]-post[,k]/lambda[[k]])
+          
+          colnames(score)<-paste0(c("mu_", "lambda_"), i)
+    }else{
+      score<-as.matrix(post[,i]*(y-mu[i])/sd[i]^2)
+      
+      colnames(score)<-paste0("mu_", k)
+    }
+    vcov_e[[i]]<-t(score)%*%score
+    se_e[[i]]<-sqrt(diag(solve(vcov_e[[i]])))
+    
+    # To compute the full emprical information matrix, i accumulate the scores across classes and compute the crossproduct
+    if(i == 1){
+      full_score <- score
+    }else{
+      full_score <- cbind(full_score, score)
+    }
+  }
+
+  full_vcov<-solve(t(full_score)%*%full_score)
+  
+  # Calculating the p_c1_c2 matrix from Muthen et al.
+
+  post<-as.data.frame(post)
+  post[,"max"]<-apply(post, 1, which.max)
+  n_max<-as.vector(table(post$max))
+  
+ logits<- q_mat<-p_mat<-matrix(as.numeric(NA), nrow = k, ncol = k)
+
+  # Most likely latent class row - true latent class column
+  for (i in 1:k){
+    for (j in 1:k){
+          p_mat[i, j]<-sum(post[post$max==i,j])/n_max[i]
+    }
+  }
+
+  
+ 
+  # Most likely latent class row
+    for (i in 1:k){
+      for (j in 1:k){
+          q_mat[i, j]<-n_max[i]*p_mat[i,j]/(sum(p_mat[,j]*n_max))
+    }
+    }
+    
+  
+    for (i in 1:k){
+      logits[i,]<-log(q_mat[i,]/q_mat[i,k])
+    }
+   q_mat<-t(q_mat)
+  
+  list(mu = mu, 
+       sd = sd,
+       lambda = lambda,
+       se_o = se_o,
+       se_e = se_e,
+       vcov_o = vcov_o,
+       vcov_e = vcov_e,
+       full_vcov = full_vcov,
+       post = post, 
+       pmat = p_mat,
+       q_mat = q_mat,
+       logits = logits,
+       ll = ll, 
+       iter = iter)
+}
+
+```
+
+
+# Predicting Latent Class Membership
+
+Often times, researchers are interested in predicting latent classes. This is difficult to do in a single-step analysis, because the simultaneous inclusion of models can cause classes to shift relative to the classes without the predictors. To rememedy this situation, it is common practice to estimate model predictors in three steps. The first step is to fit a latent class model without predictors. This model generates poterior probability estimates of an individual belonging to latent class k given their response ($p_i(k|y)$). 
+
+In the past, people have fit models using two-step procedures predicting the most likely class using an MNL model, but this does not acknowledge that using modal imputation is an imperfect. 
+
+Thus, three step procedures solve for the measurement error of the modal value for latent class. 
+
+
+```{r}
+gauss_mix(y, 2)
+```
+
+
+
+
+
+# Mixture Regression
+
+Mixture regression can be viewed as a simple variation on a mixture of normals. 
+
+$$Likelihood = \prod_{i=1}^n\prod_{k = 1}^K(\lambda_k\ \phi(y;x_i^T\beta_k,\sigma_k))^{\tau_{ik}}$$
+$$LL = \sum_{i=1}^n\sum_{k = 1}^K\tau_{ik}(log(\lambda_k)+\log(phi(y;x_i^T\beta_k,\sigma_k)))$$
+
+This fact lets us capitalize on the chain rule and use our results from above. Specifically, we can treat $x_i^T\beta_k$ and solve for 
+
+$$\frac{d}{df} \sum_{i=1}^n\sum_{k = 1}^K\tau_{ik}(log(\lambda_k)+\log(phi(x;f,\sigma_k)))\frac{d}{d\beta} x^T\beta$$
+
+The first portion of the equation was solved for above in the normal mixture section. The second portion resolves to $x$.
+
+$$\frac{d'}{d\mu_k}=\frac{\sum_{i=1}^n\tau_{ik}(y-x^T\beta)x}{\sigma_k^2}$$
+
+
+$$\frac{d''}{d\mu_k}=\frac{\sum_{i=1}^n\tau_{ik}x x^T}{\sigma_k^2}$$
+
+
+
+```{r}
+set.seed(12345)
+n<-1000
+# data with 3 clusters, known parameters, and randomness
+a<-rnorm(n = n, mean = 0, sd = 9)
+b<-rnorm(n = n, mean = 0, sd = 9)
+c1<-(5.43+2.65*b+1.97*b+rnorm(n,0,9))*rep(c(0,0,1),length.out = n)
+c2<-(1.67+5.32*a-3.88*b+rnorm(n,0,9))*rep(c(0,1,0),length.out = n)
+c3<-(3.78-1.32*a-1.22*b+rnorm(n,0,9))*rep(c(1,0,0),length.out = n)
+c<-c1+c2+c3
+
+dat<-data.frame(c = c, a =a, b = b)
+
+
+mix.reg<-function(formula=NULL, data, y=NULL, x=NULL, k, lambda = NULL, coef.start = NULL, sigma.start = NULL, random.starts = 10, return_all = FALSE, verbose = FALSE){
+  
+  if(!is.null(y) & !is.null(x)){
+    x<-as.matrix(cbind(1, x))
+    y<-as.numeric(y)
+  } else if(!is.null(formula) & !is.null(data)){
+    x<-model.matrix(formula, data)
+    y<-as.vector(model.frame(formula, data)[,!colnames(model.frame(formula, data)) %in% colnames(model.matrix(formula, data))])
+  }else{
+    stop("Please provide either a formula and data or x and y.")
+  }
+  
+  # initializing values
+  k<-k
+  j<-length(y)
+  iv<-ncol(x)
+  ll_it<-vector(mode = "numeric", length = random.starts)
+  tries <- list()
+  
+  # Protects against random starts if user provides intentional starts
+  if(is.null(coef.start)&is.null(sigma.start)){
+    rs<- random.starts
+  }else{
+    rs<-1
+  }
+  
+  # Loops over random starts
+  for(w in 1:rs){
+    # initializing values
+    post<-matrix(0, nrow = j, ncol = k)
+    xb<-matrix(0, nrow = j, ncol = k)
+    res<-matrix(0, nrow = j, ncol = k)
+    ll<-vector(mode = "numeric", length = 1000)
+    a<-2
+    ll[1]<-0
+    xw<-list(NULL)
+    yw<-list(NULL)
+    
+    # Allowing for user defined mixture proportions
+    if(is.null(lambda)){lambda <- as.vector(matrix(1/k, nrow = k))
+    } else { 
+      lambda<-lambda
+    }
+    
+    # Sets coefficient starting values (if null adds random noise to coefficients where k = 1)
+    if(is.null(coef.start)){
+      b<-rbind(
+        matrix(runif(n = k, min = 2*min(qr.coef(qr(x), y)), max = 2*max(qr.coef(qr(x), y))),ncol=k), # Intercepts
+        matrix(runif(n = iv*k-k, min = 2*min(qr.coef(qr(x), y)[2:iv]), max = 2*max(qr.coef(qr(x), y)[2:iv])),ncol=k) # Slopes
+      )
+    } else {
+      b<-coef.start
+    }
+    
+    # Setting starting values for sigma - if null sigma adds noise to sigma where k = 1 (Updated to use qr.resid)
+    if(is.null(sigma.start)){
+      s<-runif(n = k, min = .001, max = var(y))
+    } else {
+      s<-sigma.start
+    }
+    
+    # getting first log likelihood
+    xb<-x%*%b #yhat bassed on start values
+    post<-t(lambda*t(dnorm(x = y, mean = xb, sd = sqrt(s)))) #applying liklihood formula weigthing by mixture proprotions
+    ll[2]<-sum(log(rowSums(post))) # generating liklihood and storing in vector
+    
+    # main loop
+    # Look conditioned on liklihood changes
+    while(abs(ll[a]-ll[a-1])>=1e-10){
+      # Printing progress
+      if(verbose){
+          print(paste("Start", w, "iteration", a, "liklihood", ll[a]))
+      }
+      
+      # getting posterior probabilities
+      post<-post/rowSums(post) # posteriors are ratios of liklihoods
+      post[is.na(post)]<-1/k # assigns non-informative posterior if missing?
+      lambda<-colMeans(post) # mixing proportions are the means of the ratio of liklihoods
+      
+      # solving for regression coefficients via WLS
+      for(i in 1:k){
+        xw[[i]]<-(post[,i]^.5)*x
+        yw[[i]]<-(post[,i]^.5)*y
+        #b[,i]<-QR(x = xw[[i]], y = yw[[i]], least.squares = T)[[3]]
+        b[,i]<-qr.coef(qr(xw[[i]]), yw[[i]])
+      }
+      
+      # getting predicted y and residuals
+      xb<-x%*%b
+      res<-post^.5*(y-xb) # Weighting the residuals based on posterior
+      
+      # calculating residual variance
+      #s<-colSums(post*res^2)/(colSums(post))
+      s<-colSums(res^2)/(j*colMeans(post)-iv)
+      
+      # updating posterior probabilities
+      #post<-t(lambda*t(dnorm(x = y, mean = xb, sd = sqrt(s))))
+      for(i in 1:k){
+        post[,i]<-lambda[i]*dnorm(x = y, mean = xb[,i], sd = sqrt(s[i]))
+      }
+      
+      # getting log likelihood
+      ll[a+1]<-sum(log(rowSums(post)))
+      a<-a+1
+      
+    }
+    
+    # Attempt to estimate the observed information matrix using second derivative
+    # See section 2.15.2 in Machlachlan and Peel (2000); 
+    # Unsure about terminolgy (i.e., complete data vs incomplete data) and whether 2.55 suggests this is appropriate
+    my_vcov<-list()
+    se_mat<-matrix(nrow = ncol(x), ncol = k)
+    
+    for (i in 1:k){
+      my_vcov[[i]]<- solve((t(xw[[i]])%*%xw[[i]])/s[[i]])
+      se_mat[, i]<-sqrt(diag(my_vcov[[i]]))
+    }
+
+
+    
+    # Attempt to estimate empirical observed information matrix using score matrix (M&P 2.15.3)
+    # Uses score to approximate observed information v_cov2 just solves for block diagnoal whil full_score solves for full information matrix
+    my_vcov2<-list()
+    se_mat2<-matrix(nrow = ncol(x), ncol = k)
+    my_vcov3<-list()
+    se_mat3<-matrix(nrow = ncol(x), ncol = k)
+
+    for (i in 1:k){
+
+      score<-(res[,i]*xw[[i]])/s[[i]]
+      my_vcov2[[i]]<-solve(crossprod(score))
+      se_mat2[, i]<-sqrt(diag(my_vcov2[[i]]))
+      
+      if(i == 1){
+        full_score<- (post[,i]*(y-xb)*x)/s[[i]]
+      }else{
+        full_score<-rbind(full_score, (res[,i]*xw[[i]])/s[[i]])
+      }
+      my_vcov3[[i]]<-my_vcov[[i]]%*%solve(my_vcov2[[i]])%*%my_vcov[[i]]
+      se_mat3[, i]<-sqrt(diag(my_vcov3[[i]]))
+    }
+    
+    full_vcov<-matrix(1, 2,2)
+      # solve(full_score%*%t(full_score))
+    
+    # source (https://www.stat.washington.edu/sites/default/files/files/reports/2009/tr559.pdf)
+    aic<--2*log(exp(max(ll[ll!=0])))+2*(iv*k+2*k-1)
+    bic<--2*log(exp(max(ll[ll!=0])))+(iv*k+2*k-1)*log(j)
+
+  ll_it[[w]]<-max(ll[ll!=0])
+  
+  param<-as.data.frame(rbind(b, sqrt(s)))
+  
+  colnames(param)<-paste("mixture", 1:k)
+  rownames(param)<-c("(Intercept)", colnames(x)[-1], "residual")
+  
+  colnames(se_mat2)<-paste("mixture", 1:k)
+  rownames(se_mat2)<-c("(Intercept)", colnames(x)[-1])
+  
+  # colnames(full_vcov)<-rownames(full_vcov)<-paste0("m", 1:k, "_", rep(c("(Intercept)", colnames(x)[-1]), times = k))
+  
+  
+  tries[[w]]<-list(ll = ll[ll!=0],
+                  fit = list(ll = ll[[which.max(ll[ll!=0])]],
+                                   AIC = aic,
+                                   BIC = bic),
+                  param = param,
+                  se_mat_o = se_mat,
+                  observed_vcov = my_vcov,
+                  se_mat_e = se_mat2,
+                  empirical_vcov = my_vcov2,
+                  robust_vcov = my_vcov3,
+                  robust_se = se_mat3,
+                  full_vcov = full_vcov
+                    )
+  }
+  
+  if(return_all==TRUE){
+    return(tries)
+  }else{
+    return(list(Output = tries[[which.max(ll_it)]], `Random Start Likelihood` = ll_it,
+                if(sum(round(max(ll_it),2)==round(ll_it,2))<2){
+                 Replicate =  "The best log liklihood solution did not replicate. Increase the number of random starts."
+                }else{
+                 Replicate =  "The best log liklihood replicated."
+                }))
+  }
+}
+
+test<-mix.reg(formula = c~a+b, data = dat, k = 3, random.starts = 200, verbose=FALSE)
+
+
+library(mixtools)
+fm_out<-regmixEM(c, cbind(a,b),k = 3, verb = FALSE)
+bs<-boot.se(fm_out, B = 200, verb = FALSE)
+
+test$Output$param
+fm_out$beta
+test$Output$se_mat_o
+test$Output$se_mat_e
+test$Output$robust_se
+bs$beta.se
+
+
+
+
+```
+

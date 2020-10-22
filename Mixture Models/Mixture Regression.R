@@ -1,3 +1,5 @@
+
+set.seed(12345)
 # mixed data with 2 clusters and known parameters:
 a<-rnorm(n = 100, mean = 0, sd = 9)
 b<-rnorm(n = 100, mean = 0, sd = 9)
@@ -6,6 +8,7 @@ c<-(5.43+2.65*b+1.97*b)*rep(c(0,1),50)
 c1<-(1.67+5.32*a-3.88*b)*rep(c(1,0),50)
 c[c==0]<-c1[c1!=0]
 
+set.seed(12345)
 # mixed data with 2 clusters, known parameters, & randomness:
 a<-rnorm(n = 100, mean = 0, sd = 9)
 b<-rnorm(n = 100, mean = 0, sd = 9)
@@ -14,6 +17,7 @@ c<-(5.43+2.65*b+1.97*b+rnorm(100,0,9))*rep(c(0,1),50)
 c1<-(1.67+5.32*a-3.88*b+rnorm(100,0,9))*rep(c(1,0),50)
 c[c==0]<-c1[c1!=0]
 
+set.seed(12345)
 # data with 3 clusters and known parameters
 a<-rnorm(n = 100, mean = 0, sd = 9)
 b<-rnorm(n = 100, mean = 0, sd = 9)
@@ -22,6 +26,7 @@ c2<-(1.67+5.32*a-3.88*b)*rep(c(0,1,0),length.out = 100)
 c3<-(3.78-1.32*a-1.22*b)*rep(c(1,0,0),length.out = 100)
 c<-c1+c2+c3
 
+set.seed(12345)
 # data with 3 clusters, known parameters, and randomness
 a<-rnorm(n = 100, mean = 0, sd = 9)
 b<-rnorm(n = 100, mean = 0, sd = 9)
@@ -31,9 +36,6 @@ c3<-(3.78-1.32*a-1.22*b+rnorm(100,0,9))*rep(c(1,0,0),length.out = 100)
 c<-c1+c2+c3
 
 dat<-data.frame(c = c, a =a, b = b)
-
-model.matrix(c~a+b, dat)
-as.matrix(model.frame(c~a+b, dat)[,!colnames(model.frame(c~a+b, dat)) %in% colnames(model.matrix(c~a+b, dat))])
 
 
 mix.reg<-function(formula=NULL, data, y=NULL, x=NULL, k, lambda = NULL, coef.start = NULL, sigma.start = NULL, random.starts = 10, return_all = FALSE){
@@ -104,7 +106,7 @@ mix.reg<-function(formula=NULL, data, y=NULL, x=NULL, k, lambda = NULL, coef.sta
     
     # main loop
     # Look conditioned on liklihood changes
-    while(abs(ll[a]-ll[a-1])>=1e-5){
+    while(abs(ll[a]-ll[a-1])>=1e-10){
       # Printing progress
       print(paste("Start", w, "iteration", a, "liklihood", ll[a]))
       
@@ -142,6 +144,42 @@ mix.reg<-function(formula=NULL, data, y=NULL, x=NULL, k, lambda = NULL, coef.sta
       
     }
     
+    # Attempt to estimate the observed information matrix using second derivative
+    # See section 2.15.2 in Machlachlan and Peel (2000); 
+    # Unsure about terminolgy (i.e., complete data vs incomplete data)
+    my_vcov<-list()
+    se_mat<-matrix(nrow = ncol(x), ncol = k)
+    
+    for (i in 1:k){
+      my_vcov[[i]]<- solve((t(xw[[i]])%*%xw[[i]])/s[[i]])
+      se_mat[, i]<-sqrt(diag(my_vcov[[i]]))
+      
+    }
+
+
+    
+    # Attempt to estimate empirical observed information matrix using score matrix
+    my_vcov2<-list()
+    se_mat2<-matrix(nrow = ncol(x), ncol = k)
+
+    for (i in 1:k){
+      my_vcov2[[i]]<-solve(((res[,i]*t(xw[[i]]))/s[[i]])%*%t((res[,i]*t(xw[[i]]))/s[[i]]))
+      se_mat2[, i]<-sqrt(diag(my_vcov2[[i]]))
+      
+      if(i == 1){
+        full_score<- (res[,i]*t(xw[[i]]))/s[[i]]
+      }else{
+        full_score<-rbind(full_score, (res[,i]*t(xw[[i]]))/s[[i]])
+      }
+     
+      
+    }
+    
+    full_vcov<-solve(full_score%*%t(full_score))
+    
+    
+    
+    
     # source (https://www.stat.washington.edu/sites/default/files/files/reports/2009/tr559.pdf)
     aic<--2*log(exp(max(ll[ll!=0])))+2*(iv*k+2*k-1)
     bic<--2*log(exp(max(ll[ll!=0])))+(iv*k+2*k-1)*log(j)
@@ -152,12 +190,23 @@ mix.reg<-function(formula=NULL, data, y=NULL, x=NULL, k, lambda = NULL, coef.sta
   
   colnames(param)<-paste("mixture", 1:k)
   rownames(param)<-c("(Intercept)", colnames(x)[-1], "residual")
-  # 
+  
+  colnames(se_mat2)<-paste("mixture", 1:k)
+  rownames(se_mat2)<-c("(Intercept)", colnames(x)[-1])
+  
+  colnames(full_vcov)<-rownames(full_vcov)<-paste0("m", 1:k, "_", rep(c("(Intercept)", colnames(x)[-1]), times = k))
+  
+  
   tries[[w]]<-list(ll = ll[ll!=0],
                   fit = list(ll = ll[[which.max(ll[ll!=0])]],
                                    AIC = aic,
                                    BIC = bic),
-                  param = param
+                  param = param,
+                  se_mat_o = se_mat,
+                  observed_vcov = my_vcov,
+                  se_mat_e = se_mat2,
+                  empirical_vcov = my_vcov2,
+                  full_vcov = full_vcov
                     )
   }
   
@@ -179,6 +228,8 @@ test
 
 
 
-library(flexmix)
-parameters(flexmix(c~a+b,k = 3))
+library(mixtools)
+fm_out<-regmixEM(c, cbind(a,b),k = 3)
+summary(fm_out)
+boot.se(fm_out)
 test$Output$param

@@ -1,6 +1,6 @@
 dat<-as.data.frame(rbind(mixtools::rmvnorm(1000, mu = c(20,15, 5), sigma = matrix(c(1, .2, .7,
                                                                                    .2, 1, .5,
-                                                                                   .1, .5, 1), 3, 3)),
+                                                                                   .7, .5, 1), 3, 3)),
       mixtools::rmvnorm(2000, mu = c(80,2, 7), sigma = matrix(c(17, .0, 0,
                                                                 0, 21, 0,
                                                                 0, 0, 33), 3, 3)),
